@@ -1,0 +1,43 @@
+<idea-plugin>
+    <id>com.pluginfence</id>
+    <name>PluginFence</name>
+    <vendor url="https://github.com/bilal-feroz/Plugin-Fence">PluginFence</vendor>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="PluginFence"
+                    anchor="bottom"
+                    icon="/icons/pluginfence.svg"
+                    factoryClass="com.pluginfence.ui.FenceToolWindowFactory"/>
+
+        <notificationGroup id="PluginFence" displayType="BALLOON" isLogByDefault="true"/>
+        <notificationGroup id="PluginFence Incidents" displayType="STICKY_BALLOON" isLogByDefault="true"/>
+
+        <applicationService serviceImplementation="com.pluginfence.persistence.FenceState"/>
+        <applicationService serviceImplementation="com.pluginfence.persistence.FenceHistory"/>
+
+        <postStartupActivity implementation="com.pluginfence.engine.FenceProjectActivity"/>
+    </extensions>
+
+    <applicationListeners>
+        <listener class="com.pluginfence.engine.FenceAppLifecycleListener"
+                  topic="com.intellij.ide.AppLifecycleListener"/>
+        <listener class="com.pluginfence.engine.FenceProjectListener"
+                  topic="com.intellij.openapi.project.ProjectManagerListener"/>
+    </applicationListeners>
+
+    <actions>
+        <group id="PluginFence.ToolsMenu" text="PluginFence" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="PluginFence.Open" class="com.pluginfence.actions.OpenFenceAction"
+                    text="Show PluginFence" description="Open the PluginFence tool window"/>
+            <action id="PluginFence.ToggleEnforcement" class="com.pluginfence.actions.ToggleEnforcementAction"
+                    text="Enforce Policies" description="Toggle between enforcing and monitor-only mode"/>
+            <action id="PluginFence.ClearHistory" class="com.pluginfence.actions.ClearHistoryAction"
+                    text="Clear Activity History" description="Remove recorded events and incidents"/>
+            <action id="PluginFence.ResetBaselines" class="com.pluginfence.actions.ResetBaselinesAction"
+                    text="Reset Behavior Baselines" description="Forget learned plugin behaviour profiles and drift reports"/>
+        </group>
+    </actions>
+</idea-plugin>

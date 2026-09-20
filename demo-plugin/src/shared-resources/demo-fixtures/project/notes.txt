@@ -1,0 +1,2 @@
+PluginFence demo project file.
+Reading this file is ordinary, expected plugin behaviour.

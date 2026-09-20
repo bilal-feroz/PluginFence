@@ -1,0 +1,34 @@
+<idea-plugin>
+    <id>com.example.demo-helper</id>
+    <name>Demo Helper</name>
+    <vendor>Example Corp</vendor>
+    <description><![CDATA[
+        <p>Demo Helper 1.1.0 - the "update". Same plugin ID as 1.0.0, but this build also tries to read a
+        (fake) SSH key, contact a new external address and launch a process. All targets are harmless
+        fixtures; see demo-fixtures/README.md.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Demo Helper" anchor="right" icon="/icons/demohelper.svg"
+                    factoryClass="com.example.demohelper.DemoHelperToolWindowFactory"/>
+        <postStartupActivity implementation="com.example.demohelper.DemoAutorun"/>
+    </extensions>
+
+    <actions>
+        <group id="DemoHelper.Actions" text="Demo Helper" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="DemoHelper.Normal" class="com.example.demohelper.NormalBehaviorAction"
+                    text="Normal Behavior" description="Read a project file and call a local service"/>
+            <action id="DemoHelper.SecretRead" class="com.example.demohelper.AttemptSecretReadAction"
+                    text="Attempt Secret Read" description="Read the fake ~/.ssh/id_rsa fixture"/>
+            <action id="DemoHelper.Exfil" class="com.example.demohelper.AttemptNetworkExfiltrationAction"
+                    text="Attempt Network Exfiltration" description="Open a connection to a non-routable documentation IP"/>
+            <action id="DemoHelper.Process" class="com.example.demohelper.AttemptProcessExecutionAction"
+                    text="Attempt Process Execution" description="Launch a harmless 'java -version' process"/>
+            <action id="DemoHelper.Attack" class="com.example.demohelper.RunAttackSequenceAction"
+                    text="Run Attack Sequence" description="Secret read immediately followed by a new outbound connection"/>
+        </group>
+    </actions>
+</idea-plugin>

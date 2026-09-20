@@ -1,0 +1,25 @@
+<idea-plugin>
+    <id>com.example.demo-helper</id>
+    <name>Demo Helper</name>
+    <vendor>Example Corp</vendor>
+    <description><![CDATA[
+        <p>Demo Helper 1.0.0 - a small, well-behaved third-party plugin used by the PluginFence demo.
+        It reads a project file and talks to a local service. Nothing else.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Demo Helper" anchor="right" icon="/icons/demohelper.svg"
+                    factoryClass="com.example.demohelper.DemoHelperToolWindowFactory"/>
+        <postStartupActivity implementation="com.example.demohelper.DemoAutorun"/>
+    </extensions>
+
+    <actions>
+        <group id="DemoHelper.Actions" text="Demo Helper" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="DemoHelper.Normal" class="com.example.demohelper.NormalBehaviorAction"
+                    text="Normal Behavior" description="Read a project file and call a local service"/>
+        </group>
+    </actions>
+</idea-plugin>

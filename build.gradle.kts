@@ -40,11 +40,11 @@ tasks.register("buildDemoPlugins") {
 tasks.register("runFenceIde") {
     group = "pluginfence"
     description = "Starts IntelliJ IDEA with the PluginFence agent, the PluginFence plugin and Demo Helper 1.0.0"
-    dependsOn(":intellij-plugin:runIde")
+    dependsOn(":intellij-plugin:runFenceIde")
 }
 
 tasks.register("runFenceIdeUpdated") {
     group = "pluginfence"
     description = "Starts IntelliJ IDEA with the PluginFence agent, the PluginFence plugin and Demo Helper 1.1.0"
-    dependsOn(":intellij-plugin:runIdeUpdated")
+    dependsOn(":intellij-plugin:runFenceIdeUpdated")
 }

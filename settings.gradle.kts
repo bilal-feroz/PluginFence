@@ -5,6 +5,12 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+    // Single place for plugin versions; subprojects apply them without a version.
+    plugins {
+        id("org.jetbrains.kotlin.jvm") version "2.4.20"
+        id("org.jetbrains.intellij.platform") version "2.19.0"
+        id("com.gradleup.shadow") version "9.6.1"
+    }
 }
 
 plugins {
