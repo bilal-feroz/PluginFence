@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+out/
+.vscode/
+
+# IntelliJ Platform Gradle Plugin
+.intellijPlatform/
+**/idea-sandbox/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local
+local.properties
+*.log
