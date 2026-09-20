@@ -47,6 +47,21 @@ class AgentBridge(private val engine: FenceEngine) {
 
     fun diagnostics(): Map<String, String> = GuardBridge.diagnostics()
 
+    /** Every plugin whose class loader the agent has resolved so far (descriptor-derived metadata). */
+    fun knownPlugins(): List<com.pluginfence.model.PluginInfo> = GuardBridge.identities()
+        .filter { it.isKnown }
+        .map { id ->
+            com.pluginfence.model.PluginInfo(
+                pluginId = id.pluginId(),
+                name = id.pluginName(),
+                version = id.pluginVersion() ?: "",
+                vendor = id.vendor() ?: "",
+                bundled = id.isBundled,
+                trusted = engine.scope.isTrusted(id.pluginId(), id.isBundled, id.vendor()),
+                enabled = true,
+            )
+        }
+
     /** Runs [block] with the hook re-entrancy guard held so PluginFence's own I/O is never intercepted. */
     fun <T> guarded(block: () -> T): T = GuardHooks.withGuard(block)
 

@@ -302,15 +302,25 @@ class FenceEngine : Disposable {
         )
     }
 
-    /** Third-party plugins subject to policy: installed non-bundled plugins plus anything already observed. */
+    /**
+     * Third-party plugins subject to policy: every non-bundled plugin whose code the agent has seen
+     * load, plus anything already observed in events or configured in policies. (Listing *installed*
+     * plugins would require platform APIs that are internal in 2026.2; the agent's view is what
+     * enforcement is actually based on.)
+     */
     fun governedPlugins(): List<PluginInfo> {
-        val installed = scope.installedPlugins()
-        val byId = installed.associateBy { it.pluginId }.toMutableMap()
+        val byId = LinkedHashMap<String, PluginInfo>()
+        bridge?.knownPlugins()?.forEach { byId[it.pluginId] = it }
         synchronized(events) {
             for (event in events) {
                 if (event.pluginKnown && event.pluginId !in byId) {
                     byId[event.pluginId] = PluginInfo(event.pluginId, event.pluginName, event.pluginVersion, "", false, false, true)
                 }
+            }
+        }
+        for (policy in policies.all()) {
+            if (policy.pluginId !in byId && policy.pluginId != "unknown") {
+                byId[policy.pluginId] = PluginInfo(policy.pluginId, policy.pluginId, "", "", false, false, true)
             }
         }
         return byId.values

@@ -13,6 +13,12 @@ val javaToolchain = providers.gradleProperty("javaToolchainVersion").get().toInt
 
 kotlin {
     jvmToolchain(javaToolchain)
+    compilerOptions {
+        // Platform interfaces such as ToolWindowFactory ship JVM default methods; without this the
+        // compiler emits DefaultImpls delegation stubs that the Plugin Verifier reports as overrides
+        // of deprecated/experimental methods.
+        jvmDefault = org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode.NO_COMPATIBILITY
+    }
 }
 
 java {
@@ -54,8 +60,16 @@ intellijPlatform {
     }
     pluginVerification {
         ides {
-            recommended()
+            // Verify against the exact target build already resolved for compilation. `recommended()`
+            // would add the next EAP as well, at the cost of another multi-GB IDE download.
+            current()
         }
+        // The product is called PluginFence; Marketplace's naming policy flags the word "plugin" in a
+        // plugin name (TemplateWordInPluginName). That is a listing rule, not a compatibility problem,
+        // so it is the only verifier check muted here. Everything else must stay green.
+        // com.pluginfence.bootstrap is deliberately NOT bundled: the agent puts it on the boot class
+        // path (see docs/ARCHITECTURE.md), so the verifier must treat it as an external library.
+        freeArgs = listOf("-mute", "TemplateWordInPluginName", "-external-prefixes", "com.pluginfence.bootstrap")
     }
     // One shared sandbox for every run task so baselines and policies survive between runs.
     sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
@@ -76,6 +90,7 @@ fun RunIdeTask.attachPluginFenceAgent() {
     val debug = providers.gradleProperty("pluginfenceDebug").orElse("false")
     val autorun = providers.gradleProperty("demoAutorun").orElse("")
     val exitAfter = providers.gradleProperty("demoExitAfter").orElse("")
+    val openToolWindows = providers.gradleProperty("demoOpenToolWindows").orElse("false")
     jvmArgumentProviders.add(CommandLineArgumentProvider {
         buildList {
             add("-javaagent:${agentJar.get()}")
@@ -84,6 +99,7 @@ fun RunIdeTask.attachPluginFenceAgent() {
             // Scripted demo / smoke test: ./gradlew runFenceIde -PdemoAutorun=normal -PdemoExitAfter=30000
             if (autorun.get().isNotBlank()) add("-Dpluginfence.demo.autorun=${autorun.get()}")
             if (exitAfter.get().isNotBlank()) add("-Dpluginfence.demo.exitAfter=${exitAfter.get()}")
+            if (openToolWindows.get() == "true") add("-Dpluginfence.demo.openToolWindows=true")
         }
     })
     // Open the repository itself so "project file" reads have a project to be relative to.

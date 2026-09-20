@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  -Dpluginfence.demo.autorun=normal,secret,exfil,process,attack   actions to run, in order
  *  -Dpluginfence.demo.autorun.delay=8000                            ms to wait before the first action
  *  -Dpluginfence.demo.exitAfter=40000                               ms after which the IDE exits (state is saved)
+ *  -Dpluginfence.demo.openToolWindows=true                          activate the PluginFence and Demo Helper tool windows first
  *
  * Without the autorun property this activity does nothing. Actions that this plugin version does
  * not register (e.g. "secret" in 1.0.0) are skipped, which keeps the script identical for both builds.
@@ -33,6 +34,14 @@ class DemoAutorun : ProjectActivity {
 
         ApplicationManager.getApplication().executeOnPooledThread {
             Thread.sleep(delay)
+            if (java.lang.Boolean.getBoolean("pluginfence.demo.openToolWindows")) {
+                ApplicationManager.getApplication().invokeAndWait {
+                    val manager = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                    manager.getToolWindow("Demo Helper")?.activate(null, false)
+                    manager.getToolWindow("PluginFence")?.activate(null, false)
+                }
+                Thread.sleep(1_500)
+            }
             for (step in script.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }) {
                 val actionId = ACTIONS[step]
                 if (actionId == null) {

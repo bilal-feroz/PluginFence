@@ -72,15 +72,11 @@ PLUGINFENCE asks **"what did this plugin actually attempt to do?"** - and answer
 
 ## Screenshots
 
-> Replace with real captures from `./gradlew runFenceIde` - see [docs/screenshots/README.md](docs/screenshots/README.md).
-
-| Overview - incident attack chain | Drift - what changed after the update |
-| --- | --- |
-| ![Overview](docs/screenshots/overview.png) | ![Drift](docs/screenshots/drift.png) |
-
-| Activity - firewall-style log | Permissions - per-plugin matrix |
-| --- | --- |
-| ![Activity](docs/screenshots/activity.png) | ![Permissions](docs/screenshots/permissions.png) |
+Screenshots are not checked in yet - capture them from a live demo (`./gradlew runFenceIdeUpdated`
+after the baseline run) as described in [docs/screenshots/README.md](docs/screenshots/README.md).
+What the four tabs show is described step by step in [docs/DEMO.md](docs/DEMO.md), and the
+unattended smoke test ([`scripts/smoke-test.sh`](scripts/smoke-test.sh)) verifies the same flow
+from the persisted state.
 
 ## Why not just use AI?
 
@@ -192,7 +188,8 @@ and **Keep Blocking**. The developer retries the plugin action afterwards.
 ## Requirements
 
 - JDK 17+ to run Gradle (the build auto-provisions JDK 25, which IntelliJ 2026.2 requires)
-- ~2 GB of disk for the IntelliJ IDEA 2026.2.3 distribution the build downloads
+- ~4 GB of free disk: the build downloads the IntelliJ IDEA 2026.2.3 distribution (and the Plugin
+  Verifier downloads it again into `~/.pluginVerifier` if you run `verifyPlugin`)
 - Windows, macOS or Linux
 
 ## Build
@@ -204,9 +201,14 @@ and **Keep Blocking**. The developer retries the plugin action afterwards.
 ./gradlew buildPlugin        # intellij-plugin/build/distributions/intellij-plugin-<version>.zip
 ./gradlew assembleAgent      # agent/build/dist/plugin-fence-agent.jar + plugin-fence-bootstrap.jar
 ./gradlew buildDemoPlugins   # build/demo/demo-helper-1.0.0.zip and demo-helper-1.1.0.zip
+./gradlew :intellij-plugin:verifyPlugin   # IntelliJ Plugin Verifier against the target build (slow)
 ```
 
 Windows: use `gradlew.bat` with the same tasks (or `scripts\*.ps1`).
+
+The Plugin Verifier result is *Compatible* with no deprecated, experimental or internal API usage.
+One Marketplace listing rule is muted deliberately: `TemplateWordInPluginName` objects to the word
+"plugin" inside a plugin name, and the product is called PluginFence. Nothing else is suppressed.
 
 ## Run
 

@@ -1,12 +1,9 @@
 package com.pluginfence.engine
 
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.PathManager
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.pluginfence.classify.PathScope
-import com.pluginfence.model.PluginInfo
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -36,31 +33,14 @@ class ScopeTracker {
 
     /**
      * Trusted = part of the platform: PluginFence itself, plugins bundled with the IDE, or plugins
-     * whose vendor is JetBrains. Trusted plugins are monitored, never enforced against by default.
+     * whose vendor is JetBrains. The hints come from the plugin descriptor the agent read through the
+     * plugin's class loader, so no (internal) platform registry API is needed here. Trusted plugins
+     * are monitored, never enforced against by default.
      */
     fun isTrusted(pluginId: String, bundledHint: Boolean, vendorHint: String?): Boolean {
         if (pluginId == OWN_PLUGIN_ID) return true
-        return trust.computeIfAbsent(pluginId) {
-            if (bundledHint || isJetBrains(vendorHint)) return@computeIfAbsent true
-            val descriptor = runCatching { PluginManagerCore.getPlugin(PluginId.getId(pluginId)) }.getOrNull()
-            descriptor != null && (descriptor.isBundled || isJetBrains(descriptor.vendor))
-        }
+        return trust.computeIfAbsent(pluginId) { bundledHint || isJetBrains(vendorHint) }
     }
-
-    fun installedPlugins(): List<PluginInfo> = runCatching {
-        PluginManagerCore.plugins.map { d ->
-            val id = d.pluginId.idString
-            PluginInfo(
-                pluginId = id,
-                name = d.name ?: id,
-                version = d.version ?: "",
-                vendor = d.vendor ?: "",
-                bundled = d.isBundled,
-                trusted = isTrusted(id, d.isBundled, d.vendor),
-                enabled = d.isEnabled,
-            )
-        }
-    }.getOrDefault(emptyList())
 
     private fun isJetBrains(vendor: String?): Boolean {
         val v = vendor?.trim()?.lowercase() ?: return false

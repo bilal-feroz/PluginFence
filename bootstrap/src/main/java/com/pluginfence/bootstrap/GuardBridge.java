@@ -97,8 +97,11 @@ public final class GuardBridge {
     public static int registerIdentity(PluginIdentity identity) {
         if (identity == null) return 0;
         synchronized (IDENTITIES) {
-            int existing = IDENTITIES.indexOf(identity);
-            if (existing >= 0 && IDENTITIES.get(existing).loader() == identity.loader()) {
+            // One token per plugin id + version. IntelliJ creates a class loader per content module,
+            // so several loaders of the same plugin share a token; the first loader seen is kept for
+            // delegate resolution (all of a plugin's loaders can see the same libraries).
+            int existing = identity.isKnown() ? IDENTITIES.indexOf(identity) : -1;
+            if (existing > 0) {
                 return existing;
             }
             IDENTITIES.add(identity);

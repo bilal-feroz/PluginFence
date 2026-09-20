@@ -76,6 +76,20 @@ for d in drifts:
         drift_ok = "SENSITIVE_FILES" in added_caps and "198.51.100.42" in added_hosts and len(added_procs) >= 1 and int(o.get("riskScore") or 0) >= 60
 check(drift_ok, "behaviour drift 1.0.0 -> 1.1.0 recorded with new sensitive-file, network and process capabilities (HIGH+)")
 
+# PluginFence must never throw inside the IDE: scan the sandbox log for its own stack traces.
+logs = glob.glob(os.path.join(ROOT, "intellij-plugin", "build", "idea-sandbox", "*", "log", "idea.log"))
+suspicious = []
+for log in logs:
+    with open(log, encoding="utf-8", errors="ignore") as fh:
+        lines = fh.readlines()
+    for i, line in enumerate(lines):
+        if ("ERROR" in line or "Exception" in line) and ("com.pluginfence" in line or "PluginFence" in line) and "[PluginFence] INFO" not in line:
+            context = "".join(lines[i:i + 3]).strip()
+            if "com.pluginfence" in context or "PluginFence" in line:
+                suspicious.append(line.strip()[:200])
+detail = "" if not suspicious else ":\n     " + "\n     ".join(suspicious[:5])
+check(not suspicious, "no PluginFence errors/exceptions in idea.log" + detail)
+
 print()
 if failures:
     print("%d check(s) failed" % len(failures))

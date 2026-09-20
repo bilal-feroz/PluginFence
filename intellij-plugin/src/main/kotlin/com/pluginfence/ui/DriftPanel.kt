@@ -95,11 +95,7 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         table.rowHeight = JBUI.scale(26)
         table.autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
         table.emptyText.text = "No behaviour recorded for this plugin yet."
-        table.columnModel.getColumn(0).preferredWidth = JBUI.scale(130)
-        table.columnModel.getColumn(1).preferredWidth = JBUI.scale(320)
-        table.columnModel.getColumn(2).preferredWidth = JBUI.scale(110)
-        table.columnModel.getColumn(3).preferredWidth = JBUI.scale(110)
-        table.columnModel.getColumn(4).preferredWidth = JBUI.scale(110)
+        applyColumnWidths()
 
         val factorsBox = JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -170,6 +166,7 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         oldVersionLabel = previous?.version ?: "-"
         newVersionLabel = newest.version
         model.columnInfos = arrayOf(GroupColumn(), ItemColumn(), OldColumn(), NewColumn(), StatusColumn())
+        applyColumnWidths()
 
         if (drift != null && drift.hasChanges) {
             headline.text = "${drift.newCapabilityCount} NEW CAPABILIT${if (drift.newCapabilityCount == 1) "Y" else "IES"}"
@@ -195,6 +192,11 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         }
         model.items = buildRows(previous, newest, drift)
         factors.revalidate(); factors.repaint()
+    }
+
+    private fun applyColumnWidths() {
+        if (table.columnModel.columnCount < 5) return
+        listOf(130, 320, 110, 110, 110).forEachIndexed { i, w -> table.columnModel.getColumn(i).preferredWidth = JBUI.scale(w) }
     }
 
     private fun buildRows(previous: BehaviorProfile?, current: BehaviorProfile, drift: BehaviorDrift?): List<Row> {

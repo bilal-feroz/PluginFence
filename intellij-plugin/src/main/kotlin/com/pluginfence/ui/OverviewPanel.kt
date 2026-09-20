@@ -248,6 +248,13 @@ class IncidentDetailPanel(private val engine: FenceEngine) : JBPanel<IncidentDet
                 content.add(left(arrow()))
             }
             content.add(left(outcomePanel(incident)))
+            content.add(Box.createVerticalStrut(JBUI.scale(10)))
+            content.add(left(JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                isOpaque = false
+                add(javax.swing.JButton("Export as JSON", AllIcons.ToolbarDecorator.Export).apply {
+                    addActionListener { IncidentExport.export(incident, engine) }
+                })
+            }))
         }
         content.revalidate()
         content.repaint()

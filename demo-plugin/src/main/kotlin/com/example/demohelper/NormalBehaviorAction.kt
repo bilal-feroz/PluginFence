@@ -3,7 +3,7 @@ package com.example.demohelper
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.nio.file.Files
 
 /**
@@ -26,7 +26,7 @@ class NormalBehaviorAction : DumbAwareAction() {
             }
             DemoSupport.attempt("Normal behaviour: call local service") {
                 val port = DemoSupport.localServicePort()
-                val connection = URL("http://127.0.0.1:$port/health").openConnection() as HttpURLConnection
+                val connection = URI.create("http://127.0.0.1:$port/health").toURL().openConnection() as HttpURLConnection
                 connection.connectTimeout = 2000
                 connection.readTimeout = 2000
                 val body = connection.inputStream.use { String(it.readAllBytes()) }

@@ -106,13 +106,15 @@ final class PluginLoaderRegistry {
             GuardLog.warn("could not resolve plugin identity for " + describeLoader(loader), t);
         }
         PluginIdentity identity = new PluginIdentity(pluginId, name, version, vendor, bundled, describeLoader(loader), loader);
+        // Every plugin loader is registered (once per plugin id + version) so the control plane can
+        // list the plugins it has seen; only non-exempt ones are instrumented.
+        int token = GuardBridge.registerIdentity(identity);
         if (AgentConfig.OWN_PLUGIN_ID.equals(pluginId)) {
-            return new LoaderInfo(identity, 0, false, "PluginFence itself is exempt");
+            return new LoaderInfo(identity, token, false, "PluginFence itself is exempt");
         }
         if (bundled && !config.instrumentBundled) {
-            return new LoaderInfo(identity, 0, false, "bundled platform plugin");
+            return new LoaderInfo(identity, token, false, "bundled platform plugin");
         }
-        int token = GuardBridge.registerIdentity(identity);
         return new LoaderInfo(identity, token, true, null);
     }
 

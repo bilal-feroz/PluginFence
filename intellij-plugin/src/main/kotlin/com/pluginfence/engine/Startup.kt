@@ -10,10 +10,6 @@ class FenceAppLifecycleListener : AppLifecycleListener {
     override fun appFrameCreated(commandLineArgs: List<String>) {
         FenceEngine.getInstance().start()
     }
-
-    override fun appStarted() {
-        FenceEngine.getInstance().start()
-    }
 }
 
 /** Keeps the "inside project" roots current. */

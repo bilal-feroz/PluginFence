@@ -187,8 +187,8 @@ class PolicyEngine(
         // ---- context: behaviour drift and correlation ---------------------------------------
         val previous = baseline.previousVersionProfile(pluginId, request.pluginVersion)
         val newBehavior = previous != null && capability != null && !previous.hasObserved(capability, request, sensitiveMatch)
-        if (newBehavior) {
-            factors += RiskFactor("drift", "New behaviour after update (${previous!!.version} -> ${request.pluginVersion})", RiskWeights.NEW_BEHAVIOR_AFTER_UPDATE)
+        if (newBehavior && previous != null) {
+            factors += RiskFactor("drift", "New behaviour after update (${previous.version} -> ${request.pluginVersion})", RiskWeights.NEW_BEHAVIOR_AFTER_UPDATE)
         }
         val correlated = if (request.operation == FenceOperation.NETWORK_CONNECT || request.operation == FenceOperation.PROCESS_EXEC) {
             correlation.recentSensitiveAccess(pluginId, request.timestamp, CORRELATION_WINDOW_MS)

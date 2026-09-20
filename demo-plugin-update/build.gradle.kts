@@ -10,7 +10,10 @@ version = "1.1.0"
 val platformVersion = providers.gradleProperty("platformVersion").get()
 val javaToolchain = providers.gradleProperty("javaToolchainVersion").get().toInt()
 
-kotlin { jvmToolchain(javaToolchain) }
+kotlin {
+    jvmToolchain(javaToolchain)
+    compilerOptions { jvmDefault = org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode.NO_COMPATIBILITY }
+}
 java { toolchain { languageVersion = JavaLanguageVersion.of(javaToolchain) } }
 
 // 1.1.0 is a genuinely different build: the benign 1.0.0 sources plus the "update" source set

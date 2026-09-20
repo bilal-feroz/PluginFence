@@ -5,6 +5,6 @@
 #   3. assert on the persisted PluginFence state in the sandbox
 set -euo pipefail
 cd "$(dirname "$0")/.."
-./gradlew runFenceIde        -PdemoAutorun=normal -PdemoExitAfter=15000 --console=plain
-./gradlew runFenceIdeUpdated -PdemoAutorun=normal,secret,exfil,process,attack -PdemoExitAfter=15000 --console=plain
+./gradlew runFenceIde        -PdemoAutorun=normal -PdemoExitAfter=15000 -PdemoOpenToolWindows=true --console=plain
+./gradlew runFenceIdeUpdated -PdemoAutorun=normal,secret,exfil,process,attack -PdemoExitAfter=15000 -PdemoOpenToolWindows=true --console=plain
 python3 scripts/check-sandbox-state.py

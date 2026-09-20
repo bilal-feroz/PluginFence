@@ -39,6 +39,7 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
     private val detail = JPanel(BorderLayout()).apply { isOpaque = false }
     private var selectedId: String? = null
     private var updating = false
+    private var renderedSignature: String? = null
 
     init {
         list.selectionMode = ListSelectionModel.SINGLE_SELECTION
@@ -84,6 +85,11 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
     }
 
     private fun renderDetail(plugin: PluginInfo?) {
+        // Only rebuild when something relevant changed: events arrive constantly during a demo and a
+        // rebuild would close an open combo box under the user's cursor.
+        val signature = plugin?.let { p -> "${p.pluginId}|${p.version}|${p.trusted}|${engine.policies.policy(p.pluginId)}" } ?: "none"
+        if (signature == renderedSignature) return
+        renderedSignature = signature
         detail.removeAll()
         if (plugin == null) {
             detail.add(UiSupport.emptyState("Select a plugin to view and change its permissions.", AllIcons.Nodes.Plugin), BorderLayout.CENTER)
