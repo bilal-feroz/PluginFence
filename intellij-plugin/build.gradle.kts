@@ -119,6 +119,9 @@ intellijPlatformTesting.runIde.register("runFenceIde") {
     plugins {
         localPlugin(dependencies.project(":demo-plugin"))
     }
+    prepareSandboxTask {
+        sandboxSuffix = "" // no per-task suffix: config/, plugins/, system/ are shared with runFenceIdeUpdated
+    }
     task {
         attachPluginFenceAgent()
     }
@@ -128,6 +131,9 @@ intellijPlatformTesting.runIde.register("runFenceIdeUpdated") {
     sandboxDirectory = sharedSandbox
     plugins {
         localPlugin(dependencies.project(":demo-plugin-update"))
+    }
+    prepareSandboxTask {
+        sandboxSuffix = ""
     }
     task {
         attachPluginFenceAgent()

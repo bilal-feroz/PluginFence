@@ -178,7 +178,7 @@ class PolicyEngine(
                 if (!loopback && NetworkClassifier.isRawIp(host)) {
                     factors += RiskFactor("network.rawip", "Raw IP destination", RiskWeights.RAW_IP)
                 }
-                if (NetworkClassifier.isPlaintext(request.scheme)) {
+                if (!loopback && NetworkClassifier.isPlaintext(request.scheme)) {
                     factors += RiskFactor("network.plaintext", "Plaintext protocol", RiskWeights.PLAINTEXT)
                 }
             }

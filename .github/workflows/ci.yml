@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle itself runs on 21; the IntelliJ 2026.2 target (Java 25) is auto-provisioned by the
+      # foojay toolchain resolver declared in settings.gradle.kts.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Unit tests (bootstrap, agent, plugin)
+        run: ./gradlew test --no-daemon --console=plain
+
+      - name: Agent integration tests (forked JVM with -javaagent)
+        run: ./gradlew :agent:agentTest --no-daemon --console=plain
+
+      - name: Build plugins and agent
+        run: ./gradlew build buildPlugin buildDemoPlugins assembleAgent --no-daemon --console=plain
+
+      - name: Plugin configuration verification
+        run: ./gradlew verifyPluginProjectConfiguration --no-daemon --console=plain
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginfence-artifacts
+          path: |
+            intellij-plugin/build/distributions/*.zip
+            build/demo/*.zip
+            agent/build/dist/*.jar
+          if-no-files-found: error
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**
+          if-no-files-found: ignore
