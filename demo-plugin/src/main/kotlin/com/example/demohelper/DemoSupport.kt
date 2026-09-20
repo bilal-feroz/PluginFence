@@ -1,9 +1,7 @@
 package com.example.demohelper
 
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.sun.net.httpserver.HttpServer
@@ -37,8 +35,13 @@ object DemoSupport {
     @Volatile
     private var server: HttpServer? = null
 
-    val version: String
-        get() = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))?.version ?: "?"
+    /** Read from this plugin's own descriptor (patched at build time), so no platform registry API is needed. */
+    val version: String by lazy {
+        runCatching {
+            DemoSupport::class.java.getResourceAsStream("/META-INF/plugin.xml")?.use { String(it.readAllBytes()) }
+                ?.let { Regex("<version>([^<]+)</version>").find(it)?.groupValues?.get(1) }
+        }.getOrNull() ?: "?"
+    }
 
     // --- fixtures -----------------------------------------------------------------------------
 
@@ -110,8 +113,11 @@ object DemoSupport {
 
     // --- log ------------------------------------------------------------------------------------
 
+    private val ideLog = com.intellij.openapi.diagnostic.Logger.getInstance(DemoSupport::class.java)
+
     fun log(message: String) {
         val line = "${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss.SSS"))}  $message"
+        ideLog.info("Demo Helper: $message")
         log.add(line)
         while (log.size > 200) log.removeAt(0)
         listeners.forEach { l -> ApplicationManager.getApplication().invokeLater { l() } }

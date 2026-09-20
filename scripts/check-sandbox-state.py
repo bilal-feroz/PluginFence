@@ -89,6 +89,8 @@ for log in logs:
                 suspicious.append(line.strip()[:200])
 detail = "" if not suspicious else ":\n     " + "\n     ".join(suspicious[:5])
 check(not suspicious, "no PluginFence errors/exceptions in idea.log" + detail)
+opened = any("PluginFence tool window opened" in line for log in logs for line in open(log, encoding="utf-8", errors="ignore"))
+check(opened, "PluginFence tool window was constructed during the scripted run")
 
 print()
 if failures:

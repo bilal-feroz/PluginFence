@@ -7,4 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ./gradlew runFenceIde        -PdemoAutorun=normal -PdemoExitAfter=15000 -PdemoOpenToolWindows=true --console=plain
 ./gradlew runFenceIdeUpdated -PdemoAutorun=normal,secret,exfil,process,attack -PdemoExitAfter=15000 -PdemoOpenToolWindows=true --console=plain
-python3 scripts/check-sandbox-state.py
+# Prefer python3, but on Windows that name may be a Store alias stub that does not run.
+PY=python3
+"$PY" --version >/dev/null 2>&1 || PY=python
+"$PY" scripts/check-sandbox-state.py

@@ -30,6 +30,11 @@ class FenceToolWindowFactory : ToolWindowFactory, DumbAware {
         toolWindow.contentManager.addContent(content)
         panels[project] = panel
         Disposer.register(toolWindow.disposable) { panels.remove(project) }
+        val stats = engine.stats()
+        com.intellij.openapi.diagnostic.Logger.getInstance(FenceToolWindowFactory::class.java).info(
+            "PluginFence tool window opened: agent=${stats.agentInstalled} provider=${stats.providerRegistered} " +
+                "events=${stats.eventsRecorded} incidents=${engine.incidents().size} drifts=${stats.behaviorChanges}",
+        )
     }
 
     companion object {

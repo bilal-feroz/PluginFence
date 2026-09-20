@@ -49,8 +49,9 @@ whole flow below without clicks and asserts on the persisted result.
 
 This installs **Demo Helper 1.1.0** into the same sandbox - a genuinely different build of the
 same plugin ID with four extra actions. From PluginFence's point of view this is a plugin update.
-(Alternative without Gradle: *Settings → Plugins → ⚙ → Install Plugin from Disk →
-`build/demo/demo-helper-1.1.0.zip`*.)
+(Untested alternative without Gradle: *Settings → Plugins → ⚙ → Install Plugin from Disk →
+`build/demo/demo-helper-1.1.0.zip`*; the IDE may require a restart. The Gradle path above is the
+one the smoke test exercises.)
 
 5. Open the Demo Helper tool window: it now shows **1.1.0** and five buttons.
 6. Click **Attempt Secret Read**.
