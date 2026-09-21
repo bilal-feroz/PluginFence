@@ -1,11 +1,8 @@
 package com.pluginfence.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.SimpleToolWindowPanel
-import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.OnePixelSplitter
-import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPanel
@@ -19,20 +16,27 @@ import com.pluginfence.model.PluginInfo
 import com.pluginfence.model.PolicyDecision
 import com.pluginfence.policy.DefaultPolicies
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
-import java.awt.FlowLayout
+import java.awt.Graphics
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
-import java.awt.Insets
-import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.ListCellRenderer
 import javax.swing.ListSelectionModel
 
-/** Per-plugin permission matrix: ALLOW / ASK / BLOCK for each capability, applied immediately. */
-class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, true) {
+/**
+ * The per-plugin permission matrix.
+ *
+ * Each capability is a card with a three-way switch rather than a row of combo boxes: the whole
+ * policy for a plugin is then readable in one pass, and changing it is a single click instead of
+ * open-scroll-pick. Changes apply immediately and persist - there is no Apply button to forget.
+ */
+class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, true), FencePanel {
 
     private val listModel = DefaultListModel<PluginInfo>()
     private val list = JBList(listModel)
@@ -43,28 +47,50 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
 
     init {
         list.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        list.cellRenderer = PluginRenderer()
-        list.emptyText.text = "No third-party plugins found."
+        list.cellRenderer = PluginRow(engine)
+        list.fixedCellHeight = JBUI.scale(46)
+        list.border = JBUI.Borders.empty()
+        list.emptyText.text = "No third-party plugins seen yet"
+        list.emptyText.appendLine("Plugins appear once the agent has watched their code load.")
         list.addListSelectionListener {
             if (!it.valueIsAdjusting && !updating) {
                 selectedId = list.selectedValue?.pluginId
                 renderDetail(list.selectedValue)
             }
         }
+
         val listBox = JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(UiSupport.subheading("Third-party plugins").apply { border = JBUI.Borders.empty(8, 12, 4, 12) }, BorderLayout.NORTH)
-            add(JBScrollPane(list), BorderLayout.CENTER)
+            add(
+                UiSupport.sectionLabel("Third-party plugins").apply {
+                    border = JBUI.Borders.empty(UiSupport.GAP, UiSupport.PAD - 2, UiSupport.TIGHT, UiSupport.GAP)
+                },
+                BorderLayout.NORTH,
+            )
+            add(
+                JBScrollPane(list).apply {
+                    border = JBUI.Borders.customLineTop(UiSupport.hairline)
+                    viewport.background = UIUtil.getListBackground()
+                },
+                BorderLayout.CENTER,
+            )
         }
-        val splitter = OnePixelSplitter(false, 0.32f).apply {
-            firstComponent = listBox
-            secondComponent = JBScrollPane(detail).apply { border = JBUI.Borders.empty() }
-        }
-        setContent(splitter)
+
+        setContent(
+            OnePixelSplitter(false, 0.32f).apply {
+                firstComponent = listBox
+                secondComponent = JBScrollPane(detail).apply {
+                    border = JBUI.Borders.empty()
+                    verticalScrollBar.unitIncrement = JBUI.scale(16)
+                }
+            },
+        )
         renderDetail(null)
     }
 
-    fun refresh() {
+    override fun component(): JComponent = this
+
+    override fun refresh() {
         val plugins = engine.governedPlugins()
         updating = true
         try {
@@ -76,7 +102,10 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
             val index = plugins.indexOfFirst { it.pluginId == selectedId }
             when {
                 index >= 0 -> list.selectedIndex = index
-                plugins.isNotEmpty() -> { list.selectedIndex = 0; selectedId = plugins[0].pluginId }
+                plugins.isNotEmpty() -> {
+                    list.selectedIndex = 0
+                    selectedId = plugins[0].pluginId
+                }
             }
         } finally {
             updating = false
@@ -84,130 +113,202 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
         renderDetail(list.selectedValue)
     }
 
+    /**
+     * Rebuilding is deliberately conditional. Events arrive constantly during an attack, and an
+     * unconditional rebuild would yank the switch the user is in the middle of clicking.
+     */
     private fun renderDetail(plugin: PluginInfo?) {
-        // Only rebuild when something relevant changed: events arrive constantly during a demo and a
-        // rebuild would close an open combo box under the user's cursor.
         val signature = plugin?.let { p -> "${p.pluginId}|${p.version}|${p.trusted}|${engine.policies.policy(p.pluginId)}" } ?: "none"
         if (signature == renderedSignature) return
         renderedSignature = signature
         detail.removeAll()
         if (plugin == null) {
-            detail.add(UiSupport.emptyState("Select a plugin to view and change its permissions.", AllIcons.Nodes.Plugin), BorderLayout.CENTER)
+            detail.add(
+                UiSupport.emptyState(
+                    "No plugin selected",
+                    "Pick a plugin to review and change what it is allowed to reach.",
+                    AllIcons.Nodes.Plugin,
+                ),
+                BorderLayout.CENTER,
+            )
         } else {
-            detail.add(buildMatrix(plugin), BorderLayout.NORTH)
+            detail.add(buildDetail(plugin), BorderLayout.NORTH)
         }
         detail.revalidate()
         detail.repaint()
     }
 
-    private fun buildMatrix(plugin: PluginInfo): JPanel {
-        val panel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            border = JBUI.Borders.empty(12, 16)
-        }
-        panel.add(left(UiSupport.heading(plugin.name)))
-        panel.add(left(JBLabel(buildString {
-            append(plugin.pluginId)
-            if (plugin.version.isNotBlank()) append("   -   v").append(plugin.version)
-            if (plugin.vendor.isNotBlank()) append("   -   ").append(plugin.vendor)
-        }).apply { foreground = UIUtil.getContextHelpForeground() }))
+    private fun buildDetail(plugin: PluginInfo): JComponent {
+        val panel = UiSupport.column(0).apply { border = JBUI.Borders.empty(UiSupport.PAD) }
+
+        panel.add(UiSupport.heading(plugin.name))
+        panel.add(UiSupport.spacer(2))
+        panel.add(
+            UiSupport.caption(
+                buildString {
+                    append(plugin.pluginId)
+                    if (plugin.version.isNotBlank()) append("   v").append(plugin.version)
+                    if (plugin.vendor.isNotBlank()) append("   ").append(plugin.vendor)
+                },
+            ),
+        )
+
         if (plugin.trusted) {
-            panel.add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
-            panel.add(left(JBLabel(
-                "<html><b>Trusted platform plugin.</b> Bundled/JetBrains plugins are monitored but not enforced against; " +
-                    "set explicit permissions below to enforce anyway.</html>",
-            ).apply { foreground = UIUtil.getContextHelpForeground() }))
-        }
-        panel.add(javax.swing.Box.createVerticalStrut(JBUI.scale(12)))
-
-        val grid = JPanel(GridBagLayout()).apply { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT }
-        val gbc = GridBagConstraints().apply { anchor = GridBagConstraints.WEST; insets = Insets(JBUI.scale(3), 0, JBUI.scale(3), JBUI.scale(16)) }
-        header(grid, gbc, "Capability", 0); header(grid, gbc, "Policy", 1); header(grid, gbc, "Default", 2)
-        Capability.values().forEachIndexed { i, capability ->
-            val row = i + 1
-            gbc.gridy = row
-            gbc.gridx = 0
-            val name = JPanel().apply {
-                isOpaque = false
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                add(JBLabel(capability.displayName).apply { font = JBFont.label().asBold() })
-                add(JBLabel(capability.description).apply { foreground = UIUtil.getContextHelpForeground(); font = JBFont.small() })
+            panel.add(UiSupport.spacer(UiSupport.GAP))
+            val note = FenceCard().apply {
+                tint = UiSupport.low
+                padding(8, 12, 8, 12)
             }
-            grid.add(name, gbc)
-
-            gbc.gridx = 1
-            val combo = ComboBox(PolicyDecision.values())
-            combo.selectedItem = engine.policies.effective(plugin.pluginId, capability)
-            combo.renderer = DecisionRenderer()
-            combo.addActionListener {
-                val chosen = combo.selectedItem as PolicyDecision
-                val default = DefaultPolicies.of(capability)
-                engine.setPolicy(plugin.pluginId, capability, if (chosen == default) null else chosen)
-            }
-            grid.add(combo, gbc)
-
-            gbc.gridx = 2
-            val overridden = engine.policies.isOverridden(plugin.pluginId, capability)
-            grid.add(JBLabel(if (overridden) "custom (default ${DefaultPolicies.of(capability)})" else "default").apply {
-                foreground = if (overridden) UiSupport.high else UIUtil.getContextHelpForeground()
-                font = JBFont.small()
-            }, gbc)
+            note.add(
+                UiSupport.column(
+                    2,
+                    UiSupport.row(UiSupport.GAP, Pill("TRUSTED", UiSupport.low), UiSupport.subheading("Bundled or JetBrains plugin")),
+                    WrappedText("Trusted plugins are monitored but not enforced against by default. Set an explicit policy below to enforce anyway.").muted(),
+                ),
+                BorderLayout.CENTER,
+            )
+            panel.add(note)
         }
-        panel.add(grid)
 
-        val approvals = engine.policies.policy(plugin.pluginId)?.approvedTargets?.flatMap { (c, t) -> t.map { c to it } } ?: emptyList()
-        panel.add(javax.swing.Box.createVerticalStrut(JBUI.scale(14)))
-        panel.add(left(UiSupport.subheading("Always-allowed targets")))
+        panel.add(UiSupport.spacer(UiSupport.PAD))
+        panel.add(UiSupport.sectionLabel("Capabilities"))
+        panel.add(UiSupport.spacer(UiSupport.TIGHT + 2))
+        Capability.values().forEach { capability ->
+            panel.add(capabilityCard(plugin, capability))
+            panel.add(UiSupport.spacer(6))
+        }
+
+        panel.add(UiSupport.spacer(UiSupport.GAP))
+        panel.add(UiSupport.sectionLabel("Always-allowed targets"))
+        panel.add(UiSupport.spacer(UiSupport.TIGHT + 2))
+        val approvals = engine.policies.policy(plugin.pluginId)?.approvedTargets
+            ?.flatMap { (capability, targets) -> targets.map { capability to it } }
+            ?: emptyList()
         if (approvals.isEmpty()) {
-            panel.add(left(UiSupport.hint("None. Choose \"Always Allow\" on a permission request to add one.")))
+            panel.add(UiSupport.hint("None yet. \"Always Allow\" on a prevented operation adds one here."))
         } else {
             approvals.forEach { (capability, target) ->
-                val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT }
-                row.add(JBLabel("${capability.displayName}:").apply { foreground = UIUtil.getContextHelpForeground() })
-                row.add(UiSupport.mono(target))
-                row.add(JButton("Revoke").apply { addActionListener { engine.policies.revoke(plugin.pluginId, capability, target) } })
-                panel.add(row)
+                panel.add(approvalRow(plugin, capability, target))
+                panel.add(UiSupport.spacer(4))
             }
         }
 
-        panel.add(javax.swing.Box.createVerticalStrut(JBUI.scale(14)))
-        val footer = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false; alignmentX = Component.LEFT_ALIGNMENT }
-        footer.add(JButton("Reset to Defaults").apply { addActionListener { engine.policies.reset(plugin.pluginId) } })
-        footer.add(UiSupport.hint("  Changes apply immediately and persist across restarts.").apply { border = JBUI.Borders.emptyLeft(8) })
-        panel.add(footer)
+        panel.add(UiSupport.spacer(UiSupport.PAD))
+        panel.add(
+            UiSupport.row(
+                UiSupport.GAP,
+                JButton("Reset to Defaults", AllIcons.Actions.Refresh).apply {
+                    addActionListener { engine.policies.reset(plugin.pluginId) }
+                },
+                UiSupport.hint("Changes apply immediately and survive a restart."),
+            ),
+        )
         return panel
     }
 
-    private fun header(grid: JPanel, gbc: GridBagConstraints, text: String, x: Int) {
-        gbc.gridx = x
-        gbc.gridy = 0
-        grid.add(JBLabel(text).apply { foreground = UIUtil.getContextHelpForeground(); font = JBFont.small().asBold() }, gbc)
-    }
+    /** One capability: what it covers, the switch, and whether it still matches the shipped default. */
+    private fun capabilityCard(plugin: PluginInfo, capability: Capability): JComponent {
+        val default = DefaultPolicies.of(capability)
+        val effective = engine.policies.effective(plugin.pluginId, capability)
+        val overridden = engine.policies.isOverridden(plugin.pluginId, capability)
 
-    private fun left(c: Component): Component = (c as? javax.swing.JComponent)?.apply { alignmentX = Component.LEFT_ALIGNMENT } ?: c
-
-    private inner class PluginRenderer : ColoredListCellRenderer<PluginInfo>() {
-        override fun customizeCellRenderer(list: JList<out PluginInfo>, value: PluginInfo, index: Int, selected: Boolean, hasFocus: Boolean) {
-            icon = AllIcons.Nodes.Plugin
-            append(value.name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-            if (value.version.isNotBlank()) append("  ${value.version}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-            if (value.trusted) append("  trusted", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
-            val custom = engine.policies.policy(value.pluginId)?.let { it.overrides.isNotEmpty() || it.approvedTargets.values.any { s -> s.isNotEmpty() } } == true
-            if (custom) append("  custom policy", SimpleTextAttributes(SimpleTextAttributes.STYLE_SMALLER, UiSupport.high))
-            border = JBUI.Borders.empty(3, 6)
+        val switch = SegmentedControl(listOf(PolicyDecision.ALLOW, PolicyDecision.ASK, PolicyDecision.BLOCK), { it.name }, ::decisionColor).apply {
+            selected = effective
+            onSelect = { chosen -> engine.setPolicy(plugin.pluginId, capability, if (chosen == default) null else chosen) }
         }
+
+        val card = FenceCard().apply {
+            accent = decisionColor(effective)
+            padding(9, 12, 9, 12)
+        }
+        card.add(
+            UiSupport.column(
+                2,
+                UiSupport.subheading(capability.displayName),
+                UiSupport.hint(capability.description),
+            ),
+            BorderLayout.CENTER,
+        )
+        card.add(
+            UiSupport.row(
+                UiSupport.GAP,
+                JBLabel(if (overridden) "custom" else "default").apply {
+                    font = JBFont.small()
+                    foreground = if (overridden) UiSupport.accent else UIUtil.getContextHelpForeground()
+                    toolTipText = if (overridden) "Shipped default is $default" else "Matches the shipped default"
+                },
+                switch,
+            ),
+            BorderLayout.EAST,
+        )
+        return card
     }
 
-    private class DecisionRenderer : ColoredListCellRenderer<PolicyDecision>() {
-        override fun customizeCellRenderer(list: JList<out PolicyDecision>, value: PolicyDecision?, index: Int, selected: Boolean, hasFocus: Boolean) {
-            if (value == null) return
-            val color = when (value) {
-                PolicyDecision.ALLOW -> UiSupport.allowed
-                PolicyDecision.ASK -> UiSupport.ask
-                PolicyDecision.BLOCK -> UiSupport.blocked
+    private fun approvalRow(plugin: PluginInfo, capability: Capability, target: String): JComponent =
+        UiSupport.row(
+            UiSupport.GAP,
+            Pill(capability.displayName, UiSupport.allowed),
+            UiSupport.mono(target),
+            JButton("Revoke").apply {
+                addActionListener { engine.policies.revoke(plugin.pluginId, capability, target) }
+            },
+        )
+
+    private fun decisionColor(decision: PolicyDecision): Color = when (decision) {
+        PolicyDecision.ALLOW -> UiSupport.allowed
+        PolicyDecision.ASK -> UiSupport.ask
+        PolicyDecision.BLOCK -> UiSupport.blocked
+    }
+
+    /** Two lines: the plugin, and whether you have already said something about it. */
+    private class PluginRow(private val engine: FenceEngine) : JBPanel<PluginRow>(BorderLayout(JBUI.scale(UiSupport.GAP), 0)), ListCellRenderer<PluginInfo> {
+
+        private val name = JBLabel().apply { font = JBFont.label().asBold() }
+        private val subtitle = JBLabel().apply { font = JBFont.small() }
+        private val pill = Pill("", UiSupport.accent)
+        private var stripe: Color? = null
+
+        init {
+            isOpaque = true
+            border = JBUI.Borders.empty(6, 14, 6, 10)
+            add(JBLabel(AllIcons.Nodes.Plugin).apply { border = JBUI.Borders.emptyTop(2) }, BorderLayout.WEST)
+            add(UiSupport.column(1, name, subtitle), BorderLayout.CENTER)
+            add(JPanel(GridBagLayout()).apply { isOpaque = false; add(pill, GridBagConstraints()) }, BorderLayout.EAST)
+        }
+
+        override fun getListCellRendererComponent(
+            list: JList<out PluginInfo>,
+            value: PluginInfo,
+            index: Int,
+            selected: Boolean,
+            focused: Boolean,
+        ): Component {
+            background = if (selected) UIUtil.getListSelectionBackground(true) else UIUtil.getListBackground()
+            val foreground = if (selected) UIUtil.getListSelectionForeground(true) else UIUtil.getListForeground()
+
+            name.text = value.name
+            name.foreground = foreground
+            subtitle.text = buildString {
+                if (value.version.isNotBlank()) append('v').append(value.version).append("   ")
+                append(if (value.trusted) "trusted platform plugin" else "third-party")
             }
-            append(value.name, SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, color))
+            subtitle.foreground = if (selected) foreground else UIUtil.getContextHelpForeground()
+
+            val policy = engine.policies.policy(value.pluginId)
+            val customised = policy != null && (policy.overrides.isNotEmpty() || policy.approvedTargets.values.any { it.isNotEmpty() })
+            pill.isVisible = customised
+            pill.text = "CUSTOM"
+            pill.color = if (selected) foreground else UiSupport.accent
+            stripe = if (customised) UiSupport.accent else null
+            return this
+        }
+
+        override fun paintComponent(g: Graphics) {
+            super.paintComponent(g)
+            stripe?.let {
+                g.color = it
+                g.fillRect(0, 0, JBUI.scale(3), height)
+            }
         }
     }
 }

@@ -1,11 +1,17 @@
 package com.pluginfence.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.SimpleToolWindowPanel
+import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.SearchTextField
-import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
@@ -16,7 +22,6 @@ import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.ListTableModel
 import com.intellij.util.ui.UIUtil
-import com.intellij.util.ui.components.BorderLayoutPanel
 import com.pluginfence.engine.FenceEngine
 import com.pluginfence.model.FenceEvent
 import com.pluginfence.model.FenceOperation
@@ -24,24 +29,40 @@ import com.pluginfence.model.FenceRisk
 import com.pluginfence.model.FenceVerdict
 import java.awt.BorderLayout
 import java.awt.Component
-import java.awt.FlowLayout
-import javax.swing.BoxLayout
+import java.awt.Dimension
+import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
+import javax.swing.event.DocumentEvent
 import javax.swing.table.DefaultTableCellRenderer
+import javax.swing.table.TableCellRenderer
 
-/** Firewall-style activity log: filterable table plus a details pane with risk factors and actions. */
-class ActivityPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, true) {
+/**
+ * The firewall log: every intercepted operation, what PluginFence decided, and why.
+ *
+ * The filter bar is the point of the tab - a security log is only useful if you can narrow it to
+ * "what did this plugin try that I stopped?" in two clicks - so filters sit above the table and
+ * report how much of the log they are hiding.
+ */
+class ActivityPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, true), FencePanel {
 
     private val search = SearchTextField(false)
-    private val pluginFilter = ComboBox(arrayOf(ALL))
-    private val operationFilter = ComboBox(arrayOf(ALL) + FenceOperation.values().map { it.label })
-    private val severityFilter = ComboBox(arrayOf(ALL, "High and above", "Medium and above"))
+    private val pluginFilter = ComboBox(arrayOf(ALL_PLUGINS))
+    private val operationFilter = ComboBox(arrayOf(ALL_ACTIONS) + FenceOperation.values().map { it.label })
+    private val riskFilter = SegmentedControl(listOf(RISK_ALL, RISK_MEDIUM, RISK_HIGH), { it }) {
+        when (it) {
+            RISK_HIGH -> UiSupport.high
+            RISK_MEDIUM -> UiSupport.medium
+            else -> UiSupport.accent
+        }
+    }
     private val preventedOnly = JBCheckBox("Prevented only")
-    private val clearButton = JButton("Clear", AllIcons.Actions.GC)
+    private val counter = JBLabel().apply { font = JBFont.small(); foreground = UIUtil.getContextHelpForeground() }
 
     private val model = ListTableModel<FenceEvent>(TimeColumn, PluginColumn, ActionColumn, TargetColumn, DecisionColumn, RiskColumn)
     private val table = JBTable(model)
@@ -50,133 +71,211 @@ class ActivityPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(tru
     private var allEvents: List<FenceEvent> = emptyList()
 
     init {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
-            border = JBUI.Borders.empty(2, 8)
-            add(search.apply { preferredSize = java.awt.Dimension(JBUI.scale(200), preferredSize.height) })
-            add(JBLabel("Plugin:")); add(pluginFilter)
-            add(JBLabel("Action:")); add(operationFilter)
-            add(JBLabel("Risk:")); add(severityFilter)
-            add(preventedOnly)
-            add(clearButton)
-        }
-        search.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
-            override fun textChanged(e: javax.swing.event.DocumentEvent) = applyFilters()
+        toolbar = buildFilterBar()
+
+        riskFilter.onSelect = { applyFilters() }
+        search.addDocumentListener(object : DocumentAdapter() {
+            override fun textChanged(e: DocumentEvent) = applyFilters()
         })
         pluginFilter.addActionListener { applyFilters() }
         operationFilter.addActionListener { applyFilters() }
-        severityFilter.addActionListener { applyFilters() }
         preventedOnly.addActionListener { applyFilters() }
-        clearButton.addActionListener { engine.clearHistory() }
 
         table.selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
         table.setShowGrid(false)
-        table.rowHeight = JBUI.scale(24)
-        table.emptyText.text = "No activity yet. Run a plugin action to see it here."
+        table.intercellSpacing = Dimension(0, 0)
+        table.rowHeight = JBUI.scale(28)
         table.autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
-        table.columnModel.getColumn(0).preferredWidth = JBUI.scale(70)
-        table.columnModel.getColumn(1).preferredWidth = JBUI.scale(160)
-        table.columnModel.getColumn(2).preferredWidth = JBUI.scale(90)
-        table.columnModel.getColumn(3).preferredWidth = JBUI.scale(360)
-        table.columnModel.getColumn(4).preferredWidth = JBUI.scale(110)
-        table.columnModel.getColumn(5).preferredWidth = JBUI.scale(90)
+        table.setAutoCreateRowSorter(true)
+        table.emptyText.text = "No activity yet"
+        table.emptyText.appendLine("Every file, environment, process and network call a third-party plugin makes shows up here.")
+        listOf(72, 170, 104, 380, 118, 110).forEachIndexed { i, width ->
+            table.columnModel.getColumn(i).preferredWidth = JBUI.scale(width)
+        }
         table.selectionModel.addListSelectionListener {
             if (!it.valueIsAdjusting) {
-                val row = table.selectedRow
-                val event = if (row >= 0) model.getItem(table.convertRowIndexToModel(row)) else null
+                val event = eventAt(table, table.selectedRow)
                 selectedId = event?.id
                 details.show(event)
             }
         }
 
-        val splitter = OnePixelSplitter(true, 0.6f).apply {
-            firstComponent = JBScrollPane(table)
+        val splitter = OnePixelSplitter(true, 0.58f).apply {
+            firstComponent = JBScrollPane(table).apply { border = JBUI.Borders.empty() }
             secondComponent = details
         }
-        val root = BorderLayoutPanel().addToTop(toolbar).addToCenter(splitter)
-        setContent(root)
+        setContent(splitter)
     }
 
-    fun refresh() {
+    override fun component(): JComponent = this
+
+    override fun refresh() {
         allEvents = engine.events()
         val plugins = allEvents.map { it.displayPlugin }.distinct().sorted()
-        val current = pluginFilter.selectedItem as? String ?: ALL
-        val items = listOf(ALL) + plugins
+        val current = pluginFilter.selectedItem as? String ?: ALL_PLUGINS
+        val items = listOf(ALL_PLUGINS) + plugins
         if ((0 until pluginFilter.itemCount).map { pluginFilter.getItemAt(it) } != items) {
             pluginFilter.removeAllItems()
             items.forEach { pluginFilter.addItem(it) }
-            pluginFilter.selectedItem = if (current in items) current else ALL
+            pluginFilter.selectedItem = if (current in items) current else ALL_PLUGINS
         }
+        applyFilters()
+    }
+
+    /** Entry point for the Overview tiles: show me only what PluginFence actually stopped. */
+    fun showPreventedOnly() {
+        search.text = ""
+        pluginFilter.selectedItem = ALL_PLUGINS
+        operationFilter.selectedItem = ALL_ACTIONS
+        riskFilter.selected = RISK_ALL
+        preventedOnly.isSelected = true
+        applyFilters()
+    }
+
+    /** Entry point from an incident: show me everything this plugin did, prevented or not. */
+    fun showPlugin(pluginName: String) {
+        search.text = ""
+        operationFilter.selectedItem = ALL_ACTIONS
+        riskFilter.selected = RISK_ALL
+        preventedOnly.isSelected = false
+        val known = (0 until pluginFilter.itemCount).any { pluginFilter.getItemAt(it) == pluginName }
+        pluginFilter.selectedItem = if (known) pluginName else ALL_PLUGINS
         applyFilters()
     }
 
     private fun applyFilters() {
         val query = search.text.trim().lowercase()
-        val plugin = pluginFilter.selectedItem as? String ?: ALL
-        val op = operationFilter.selectedItem as? String ?: ALL
-        val minRisk = when (severityFilter.selectedItem as? String) {
-            "High and above" -> FenceRisk.HIGH
-            "Medium and above" -> FenceRisk.MEDIUM
+        val plugin = pluginFilter.selectedItem as? String ?: ALL_PLUGINS
+        val op = operationFilter.selectedItem as? String ?: ALL_ACTIONS
+        val minRisk = when (riskFilter.selected) {
+            RISK_HIGH -> FenceRisk.HIGH
+            RISK_MEDIUM -> FenceRisk.MEDIUM
             else -> FenceRisk.INFO
         }
         val filtered = allEvents.filter { e ->
-            (plugin == ALL || e.displayPlugin == plugin) &&
-                (op == ALL || e.actionLabel == op) &&
+            (plugin == ALL_PLUGINS || e.displayPlugin == plugin) &&
+                (op == ALL_ACTIONS || e.actionLabel == op) &&
                 e.riskLevel >= minRisk &&
                 (!preventedOnly.isSelected || e.prevented) &&
-                (query.isEmpty() || e.target.lowercase().contains(query) || e.displayPlugin.lowercase().contains(query) ||
-                    e.reason.lowercase().contains(query) || e.api.lowercase().contains(query))
+                (
+                    query.isEmpty() || e.target.lowercase().contains(query) || e.displayPlugin.lowercase().contains(query) ||
+                        e.reason.lowercase().contains(query) || e.api.lowercase().contains(query)
+                    )
         }
         model.items = filtered
-        val index = filtered.indexOfFirst { it.id == selectedId }
-        if (index >= 0) {
-            table.setRowSelectionInterval(index, index)
-        } else if (filtered.isNotEmpty() && selectedId == null) {
-            table.setRowSelectionInterval(0, 0)
-        } else if (filtered.isEmpty()) {
-            details.show(null)
+        renderCounter(filtered.size, allEvents.size)
+
+        val modelIndex = filtered.indexOfFirst { it.id == selectedId }
+        when {
+            modelIndex >= 0 -> select(modelIndex)
+            filtered.isNotEmpty() && selectedId == null -> select(0)
+            filtered.isEmpty() -> details.show(null)
         }
     }
 
-    // --- columns ----------------------------------------------------------------------------
+    private fun select(modelIndex: Int) {
+        val viewIndex = runCatching { table.convertRowIndexToView(modelIndex) }.getOrDefault(-1)
+        if (viewIndex >= 0) table.setRowSelectionInterval(viewIndex, viewIndex)
+    }
+
+    private fun renderCounter(shown: Int, total: Int) {
+        counter.text = if (shown == total) {
+            if (total == 1) "1 operation" else "$total operations"
+        } else {
+            "$shown of $total"
+        }
+        counter.foreground = if (shown == total) UIUtil.getContextHelpForeground() else UiSupport.accent
+    }
+
+    private fun buildFilterBar(): JComponent {
+        search.preferredSize = Dimension(JBUI.scale(190), search.preferredSize.height)
+        search.textEditor.emptyText.text = "Search path, host, reason or API"
+
+        val group = DefaultActionGroup()
+        group.add(object : AnAction("Clear Activity History", "Remove recorded events and incidents", AllIcons.Actions.GC), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+            override fun actionPerformed(e: AnActionEvent) = engine.clearHistory()
+        })
+        val actions = ActionManager.getInstance().createActionToolbar("PluginFenceActivity", group, true)
+        actions.targetComponent = this
+
+        return JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(5, 10, 5, 4)
+            add(
+                UiSupport.row(8, search, riskFilter, pluginFilter, operationFilter, preventedOnly),
+                BorderLayout.WEST,
+            )
+            add(
+                UiSupport.row(6, counter, actions.component),
+                BorderLayout.EAST,
+            )
+        }
+    }
+
+    // --- columns ------------------------------------------------------------------------------
 
     private object TimeColumn : ColumnInfo<FenceEvent, String>("Time") {
         override fun valueOf(item: FenceEvent) = UiSupport.time(item.timestamp)
+
         override fun getRenderer(item: FenceEvent?) = MutedRenderer
     }
 
     private object PluginColumn : ColumnInfo<FenceEvent, String>("Plugin") {
-        override fun valueOf(item: FenceEvent) = item.displayPlugin + if (item.pluginVersion.isNotBlank()) " ${item.pluginVersion}" else ""
+        override fun valueOf(item: FenceEvent) =
+            item.displayPlugin + if (item.pluginVersion.isNotBlank()) " ${item.pluginVersion}" else ""
     }
 
     private object ActionColumn : ColumnInfo<FenceEvent, String>("Action") {
         override fun valueOf(item: FenceEvent) = item.actionLabel
+
         override fun getRenderer(item: FenceEvent?) = ActionRenderer
     }
 
     private object TargetColumn : ColumnInfo<FenceEvent, String>("Target") {
         override fun valueOf(item: FenceEvent) = item.target
+
         override fun getRenderer(item: FenceEvent?) = TargetRenderer
     }
 
     private object DecisionColumn : ColumnInfo<FenceEvent, String>("Decision") {
-        override fun valueOf(item: FenceEvent) = item.decisionLabel
-        override fun getRenderer(item: FenceEvent?) = DecisionRenderer
+        private val renderer = PillRenderer()
+
+        override fun valueOf(item: FenceEvent) = UiSupport.verdictShort(item.verdict)
+
+        override fun getRenderer(item: FenceEvent?) = renderer
     }
 
-    private object RiskColumn : ColumnInfo<FenceEvent, String>("Risk") {
-        override fun valueOf(item: FenceEvent) = item.riskLevel.label
-        override fun getRenderer(item: FenceEvent?) = RiskRenderer
-        override fun getComparator(): Comparator<FenceEvent> = compareBy { it.riskScore }
+    /**
+     * Sorted by the numeric score, not by the label, so "sort by risk" puts the worst thing the
+     * plugin did at the top rather than grouping alphabetically.
+     */
+    private object RiskColumn : ColumnInfo<FenceEvent, Int>("Risk") {
+        override fun valueOf(item: FenceEvent) = item.riskScore
+
+        private val renderer = RiskCellRenderer()
+
+        override fun getColumnClass(): Class<*> = Int::class.javaObjectType
+
+        override fun getRenderer(item: FenceEvent?) = renderer
     }
+
+    // --- renderers ----------------------------------------------------------------------------
 
     private abstract class EventRenderer : DefaultTableCellRenderer() {
-        override fun getTableCellRendererComponent(table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int): Component {
+        override fun getTableCellRendererComponent(
+            table: JTable,
+            value: Any?,
+            isSelected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int,
+        ): Component {
             super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
             icon = null
             font = JBFont.label()
-            border = JBUI.Borders.empty(0, 6)
-            val event = (table.model as? ListTableModel<*>)?.getItem(table.convertRowIndexToModel(row)) as? FenceEvent
-            if (event != null) customize(event, isSelected)
+            border = JBUI.Borders.empty(0, 8)
+            eventAt(table, row)?.let { customize(it, isSelected) }
             return this
         }
 
@@ -198,114 +297,233 @@ class ActivityPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(tru
     private object TargetRenderer : EventRenderer() {
         override fun customize(event: FenceEvent, selected: Boolean) {
             toolTipText = event.target
+            font = monoFont()
             if (event.sensitiveCategory != null && !selected) foreground = UiSupport.high
         }
     }
 
-    private object DecisionRenderer : EventRenderer() {
-        override fun customize(event: FenceEvent, selected: Boolean) {
-            icon = UiSupport.verdictIcon(event.verdict)
-            font = JBFont.label().asBold()
-            if (!selected) foreground = UiSupport.verdictColor(event.verdict)
+    /** The verdict as a pill: the one column people scan down, so it gets the strongest shape. */
+    private class PillRenderer : JPanel(GridBagLayout()), TableCellRenderer {
+
+        private val pill = Pill("", UiSupport.info)
+
+        init {
+            isOpaque = true
+            add(pill, GridBagConstraints())
+        }
+
+        override fun getTableCellRendererComponent(
+            table: JTable,
+            value: Any?,
+            isSelected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int,
+        ): Component {
+            background = if (isSelected) table.selectionBackground else table.background
+            val event = eventAt(table, row)
+            pill.text = event?.let { UiSupport.verdictShort(it.verdict) } ?: value?.toString().orEmpty()
+            pill.color = when {
+                isSelected -> table.selectionForeground
+                event != null -> UiSupport.verdictColor(event.verdict)
+                else -> UiSupport.info
+            }
+            return this
         }
     }
 
-    private object RiskRenderer : EventRenderer() {
-        override fun customize(event: FenceEvent, selected: Boolean) {
-            font = JBFont.label().asBold()
-            text = "${event.riskLevel.label}  ${event.riskScore}"
-            if (!selected) foreground = UiSupport.riskColor(event.riskLevel)
+    /** Risk as a bar plus the score: proportion first, precision second. */
+    private class RiskCellRenderer : JPanel(BorderLayout(JBUI.scale(8), 0)), TableCellRenderer {
+
+        private val meter = RiskMeter(46, 6)
+        private val label = JBLabel().apply { font = JBFont.small().asBold() }
+
+        init {
+            isOpaque = true
+            border = JBUI.Borders.empty(0, 8)
+            add(meter, BorderLayout.WEST)
+            add(label, BorderLayout.CENTER)
+        }
+
+        override fun getTableCellRendererComponent(
+            table: JTable,
+            value: Any?,
+            isSelected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int,
+        ): Component {
+            background = if (isSelected) table.selectionBackground else table.background
+            val event = eventAt(table, row)
+            val color = event?.let { UiSupport.riskColor(it.riskLevel) } ?: UiSupport.info
+            meter.set(event?.riskScore ?: 0, color)
+            label.text = "${event?.riskScore ?: 0}  ${event?.riskLevel?.label?.uppercase().orEmpty()}"
+            label.foreground = if (isSelected) table.selectionForeground else color
+            return this
         }
     }
 
     companion object {
-        private const val ALL = "All"
+        private const val ALL_PLUGINS = "All plugins"
+        private const val ALL_ACTIONS = "All actions"
+        private const val RISK_ALL = "All risk"
+        private const val RISK_MEDIUM = "Medium+"
+        private const val RISK_HIGH = "High+"
+
+        /** Recomputed rather than cached: the label font follows the IDE's font-size setting. */
+        private fun monoFont(): Font = JBFont.create(Font(Font.MONOSPACED, Font.PLAIN, JBFont.label().size))
+
+        private fun eventAt(table: JTable, row: Int): FenceEvent? {
+            if (row < 0) return null
+            val model = table.model as? ListTableModel<*> ?: return null
+            val index = runCatching { table.convertRowIndexToModel(row) }.getOrDefault(-1)
+            if (index < 0 || index >= model.rowCount) return null
+            return model.getItem(index) as? FenceEvent
+        }
     }
 }
 
-/** Key/value details for one event, including the deterministic risk breakdown and permission actions. */
+/**
+ * Everything known about one operation, in the order a reviewer asks for it: what was decided,
+ * what was touched, who touched it, and how the score was arrived at.
+ *
+ * The risk breakdown is the important part - a number nobody can explain is a number nobody
+ * trusts, so every point is attributed to a named factor.
+ */
 class EventDetailsPanel(private val engine: FenceEngine) : JBPanel<EventDetailsPanel>(BorderLayout()) {
 
-    private val content = JPanel().apply {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque = false
-        border = JBUI.Borders.empty(10, 14)
+    private val content = UiSupport.column(0).apply { border = JBUI.Borders.empty(UiSupport.PAD - 2, UiSupport.PAD) }
+
+    private val scroll = JBScrollPane(content).apply {
+        border = JBUI.Borders.empty()
+        verticalScrollBar.unitIncrement = JBUI.scale(16)
     }
 
+    private val empty = UiSupport.emptyState(
+        "Nothing selected",
+        "Select an operation above to see its target, its rule and how its risk score was built.",
+        AllIcons.General.Information,
+    )
+
+    private var showingEmpty = true
+
     init {
-        add(JBScrollPane(content).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
-        show(null)
+        add(empty, BorderLayout.CENTER)
     }
 
     fun show(event: FenceEvent?) {
-        content.removeAll()
         if (event == null) {
-            content.add(UiSupport.hint("Select an event to see details."))
+            if (!showingEmpty) {
+                remove(scroll)
+                add(empty, BorderLayout.CENTER)
+                showingEmpty = true
+            }
+            content.removeAll()
         } else {
-            val head = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-                isOpaque = false
-                alignmentX = Component.LEFT_ALIGNMENT
-                add(UiSupport.badge(event.decisionLabel.substringBefore(" "), UiSupport.verdictColor(event.verdict)))
-                add(UiSupport.badge("${event.riskLevel.label} ${event.riskScore}", UiSupport.riskColor(event.riskLevel)))
-                add(UiSupport.subheading("${event.actionLabel} by ${event.displayPlugin}"))
+            if (showingEmpty) {
+                remove(empty)
+                add(scroll, BorderLayout.CENTER)
+                showingEmpty = false
             }
-            content.add(head)
-            content.add(javax.swing.Box.createVerticalStrut(JBUI.scale(8)))
+            content.removeAll()
+            render(event)
+        }
+        revalidate()
+        repaint()
+    }
 
-            val rows = mutableListOf(
-                "Plugin" to "${event.displayPlugin}  (${event.pluginId}${if (event.pluginVersion.isNotBlank()) ", v" + event.pluginVersion else ""})",
-                "Time" to UiSupport.dateTime(event.timestamp),
-                "Target" to engine.sensitivePaths.displayPath(event.target),
+    private fun render(event: FenceEvent) {
+        val verdictColor = UiSupport.verdictColor(event.verdict)
+        val riskColor = UiSupport.riskColor(event.riskLevel)
+
+        content.add(
+            UiSupport.row(
+                UiSupport.GAP,
+                Pill(UiSupport.verdictShort(event.verdict), verdictColor, solid = true),
+                Pill("${event.riskLevel.label.uppercase()} ${event.riskScore}", riskColor),
+                UiSupport.subheading("${event.actionLabel} by ${event.displayPlugin}"),
+            ),
+        )
+        content.add(UiSupport.spacer(UiSupport.GAP))
+
+        content.add(field("Target", engine.sensitivePaths.displayPath(event.target), mono = true))
+        event.metadata["args"]?.takeIf { it.isNotBlank() }?.let { content.add(field("Arguments", it, mono = true)) }
+        event.metadata["url"]?.takeIf { it.isNotBlank() }?.let { content.add(field("URL", it, mono = true)) }
+        content.add(
+            field(
+                "Plugin",
+                buildString {
+                    append(event.displayPlugin)
+                    if (event.pluginVersion.isNotBlank()) append(" v").append(event.pluginVersion)
+                    append("  (").append(event.pluginId).append(')')
+                },
+            ),
+        )
+        content.add(field("Time", UiSupport.dateTime(event.timestamp)))
+        event.sensitiveCategory?.let { content.add(field("Sensitive", it)) }
+        event.pathRelation?.let { content.add(field("Location", it.name.lowercase().replace('_', ' '))) }
+        content.add(field("Capability", event.capability?.displayName ?: "not governed"))
+        content.add(field("Rule", "${event.ruleId}  -  ${event.reason}"))
+        content.add(field("API", event.api, mono = true))
+        content.add(field("Source", event.sourceClass, mono = true))
+
+        content.add(UiSupport.spacer(UiSupport.PAD))
+        content.add(UiSupport.sectionLabel("Why this scored ${event.riskScore}"))
+        content.add(UiSupport.spacer(UiSupport.TIGHT + 2))
+        if (event.riskFactors.isEmpty()) {
+            content.add(UiSupport.hint("No risk factors - a routine operation for this plugin."))
+        } else {
+            event.riskFactors.forEach { factor ->
+                content.add(
+                    UiSupport.row(
+                        8,
+                        JBLabel("+${factor.points}").apply {
+                            font = JBFont.small().asBold()
+                            foreground = riskColor
+                            preferredSize = Dimension(JBUI.scale(28), preferredSize.height)
+                        },
+                        RiskMeter(54, 5).apply { set((factor.points * 2).coerceAtMost(100), riskColor) },
+                        JBLabel(factor.label),
+                    ),
+                )
+            }
+        }
+
+        if (event.verdict == FenceVerdict.ASK || (event.verdict == FenceVerdict.BLOCK && event.capability != null)) {
+            content.add(UiSupport.spacer(UiSupport.PAD))
+            val actions = FenceCard().apply {
+                tint = verdictColor
+                padding(10, 12, 10, 12)
+            }
+            actions.add(
+                UiSupport.column(
+                    UiSupport.TIGHT + 2,
+                    UiSupport.subheading("This operation was prevented"),
+                    UiSupport.hint("Grant access here, then retry the plugin action - PluginFence never replays it for you."),
+                    UiSupport.row(
+                        6,
+                        JButton("Allow Once").apply { addActionListener { engine.allowOnce(event) } },
+                        JButton("Always Allow ${UiSupport.shorten(event.approvalTarget, 36)}").apply {
+                            addActionListener { engine.alwaysAllow(event) }
+                        },
+                    ),
+                ),
+                BorderLayout.CENTER,
             )
-            if (event.metadata["args"]?.isNotBlank() == true) rows += "Arguments" to event.metadata["args"]!!
-            if (event.metadata["url"]?.isNotBlank() == true) rows += "URL" to event.metadata["url"]!!
-            if (event.sensitiveCategory != null) rows += "Sensitive category" to event.sensitiveCategory
-            if (event.pathRelation != null) rows += "Location" to event.pathRelation.name.lowercase().replace('_', ' ')
-            rows += "Capability" to (event.capability?.displayName ?: "not governed")
-            rows += "Decision" to "${event.decisionLabel} - ${event.reason}  [${event.ruleId}]"
-            rows += "API" to event.api
-            rows += "Source class" to event.sourceClass
-            rows.forEach { (k, v) -> content.add(row(k, v)) }
-
-            content.add(javax.swing.Box.createVerticalStrut(JBUI.scale(8)))
-            content.add(left(UiSupport.subheading("Risk factors")))
-            if (event.riskFactors.isEmpty()) {
-                content.add(row("", "none - routine operation"))
-            } else {
-                event.riskFactors.forEach { f -> content.add(row("+${f.points}", f.label)) }
-            }
-
-            if (event.verdict == FenceVerdict.ASK || (event.verdict == FenceVerdict.BLOCK && event.capability != null)) {
-                content.add(javax.swing.Box.createVerticalStrut(JBUI.scale(10)))
-                val actions = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-                    isOpaque = false
-                    alignmentX = Component.LEFT_ALIGNMENT
-                    add(JButton("Allow Once").apply { addActionListener { engine.allowOnce(event) } })
-                    add(JButton("Always Allow ${event.approvalTarget}").apply { addActionListener { engine.alwaysAllow(event) } })
-                    add(UiSupport.hint("Then retry the plugin action."))
-                }
-                content.add(actions)
-            }
+            content.add(actions)
         }
-        content.revalidate()
-        content.repaint()
     }
 
-    private fun row(key: String, value: String): JComponent {
-        val panel = JPanel(BorderLayout(JBUI.scale(10), 0)).apply {
-            isOpaque = false
-            alignmentX = Component.LEFT_ALIGNMENT
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(22))
+    private fun field(key: String, value: String, mono: Boolean = false): JComponent {
+        val label = UiSupport.sectionLabel(key).apply {
+            preferredSize = Dimension(JBUI.scale(94), preferredSize.height)
+            border = JBUI.Borders.emptyTop(2)
         }
-        val k = JBLabel(key).apply {
-            foreground = UIUtil.getContextHelpForeground()
-            preferredSize = java.awt.Dimension(JBUI.scale(110), preferredSize.height)
+        val text = (if (mono) UiSupport.mono(value) else JBLabel(value)).apply { toolTipText = value }
+        return Stack(BorderLayout(JBUI.scale(8), 0)).apply {
+            border = JBUI.Borders.emptyBottom(JBUI.scale(3))
+            add(label, BorderLayout.WEST)
+            add(text, BorderLayout.CENTER)
         }
-        val v = JBLabel(value).apply { toolTipText = value }
-        panel.add(k, BorderLayout.WEST)
-        panel.add(v, BorderLayout.CENTER)
-        return panel
     }
-
-    private fun left(c: JComponent): JComponent = c.apply { alignmentX = Component.LEFT_ALIGNMENT }
 }

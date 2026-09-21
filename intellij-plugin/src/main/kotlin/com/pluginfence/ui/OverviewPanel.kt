@@ -1,10 +1,17 @@
 package com.pluginfence.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.ToggleAction
+import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
-import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.OnePixelSplitter
-import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPanel
@@ -19,300 +26,575 @@ import com.pluginfence.model.FenceStats
 import com.pluginfence.model.FenceVerdict
 import com.pluginfence.model.Incident
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
-import java.awt.FlowLayout
-import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.GridLayout
-import javax.swing.BorderFactory
-import javax.swing.Box
-import javax.swing.BoxLayout
+import java.awt.datatransfer.StringSelection
 import javax.swing.DefaultListModel
+import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.Icon
 import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.ListCellRenderer
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
 
-/** Dashboard: protection status, headline numbers and recent incidents with the attack-chain view. */
-class OverviewPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, true) {
+/**
+ * The tab that answers "am I protected, and did anything happen?" in one screen.
+ *
+ * Top to bottom: a status banner that states the protection posture in words, four headline
+ * numbers that double as shortcuts into the other tabs, then the incident feed with the attack
+ * chain for whichever incident is selected.
+ */
+class OverviewPanel(private val engine: FenceEngine, private val navigator: FenceNavigator) :
+    SimpleToolWindowPanel(true, true), FencePanel {
 
-    private val statusTitle = JBLabel("PLUGINFENCE").apply { font = JBFont.label().deriveFont(Font.BOLD, JBFont.label().size2D + 5f) }
-    private val statusLine = JBLabel()
-    private val statusDetail = JBLabel().apply { foreground = UIUtil.getContextHelpForeground(); font = JBFont.small() }
-    private val statusIcon = JBLabel(AllIcons.General.InspectionsOK)
+    private val statusBanner = StatusBanner()
+    private val setupCard = SetupCard()
 
-    private val monitoredCard = StatCard("Plugins monitored")
-    private val blockedCard = StatCard("Blocked attempts")
-    private val driftCard = StatCard("Behavior changes")
-    private val criticalCard = StatCard("Critical incidents")
+    private val monitoredTile = StatTile("Plugins watched", "third-party code under policy") { navigator.open(FenceToolWindowFactory.TAB_PERMISSIONS) }
+    private val preventedTile = StatTile("Prevented", "blocked or held for approval") { navigator.openPrevented() }
+    private val driftTile = StatTile("Behavior changes", "after a plugin update") { navigator.open(FenceToolWindowFactory.TAB_DRIFT) }
+    private val criticalTile = StatTile("Critical incidents", "correlated attack chains") { selectFirstCritical() }
 
     private val incidentModel = DefaultListModel<Incident>()
     private val incidentList = JBList(incidentModel)
-    private val detail = IncidentDetailPanel(engine)
-    private val setupPanel = SetupPanel()
+    private val detail = IncidentDetailPanel(engine, navigator)
     private var selectedId: String? = null
 
     init {
-        val header = JBPanel<JBPanel<*>>(BorderLayout(JBUI.scale(12), 0)).apply {
-            border = JBUI.Borders.empty(12, 16, 8, 16)
-            val text = JPanel().apply {
-                isOpaque = false
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                add(statusTitle)
-                add(statusLine)
-                add(statusDetail)
-            }
-            statusIcon.verticalAlignment = SwingConstants.TOP
-            add(statusIcon, BorderLayout.WEST)
-            add(text, BorderLayout.CENTER)
-        }
-        val cards = JPanel(GridLayout(1, 4, JBUI.scale(10), 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(0, 16, 12, 16)
-            add(monitoredCard); add(blockedCard); add(driftCard); add(criticalCard)
-        }
-        val top = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(header, BorderLayout.NORTH)
-            add(cards, BorderLayout.CENTER)
-            add(setupPanel, BorderLayout.SOUTH)
-        }
+        toolbar = buildToolbar()
 
         incidentList.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        incidentList.cellRenderer = IncidentRenderer()
-        incidentList.emptyText.text = "No incidents recorded. Sensitive sequences will appear here."
+        incidentList.cellRenderer = IncidentRow()
+        incidentList.fixedCellHeight = JBUI.scale(52)
+        incidentList.border = JBUI.Borders.empty()
+        incidentList.emptyText.text = "No incidents yet"
+        incidentList.emptyText.appendLine("Sequences such as \"read a credential, then open a socket\" are correlated and land here.")
         incidentList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 selectedId = incidentList.selectedValue?.id
                 detail.show(incidentList.selectedValue)
             }
         }
-        val incidentsBox = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(UiSupport.subheading("Recent incidents").apply { border = JBUI.Borders.empty(6, 16, 4, 16) }, BorderLayout.NORTH)
-            add(JBScrollPane(incidentList).apply { border = JBUI.Borders.customLineTop(JBUI.CurrentTheme.ToolWindow.borderColor()) }, BorderLayout.CENTER)
+
+        val header = UiSupport.column(UiSupport.GAP, statusBanner, tiles(), setupCard).apply {
+            border = JBUI.Borders.empty(UiSupport.PAD, UiSupport.PAD, UiSupport.GAP, UiSupport.PAD)
         }
+
+        val feed = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(
+                UiSupport.sectionLabel("Incidents").apply {
+                    border = JBUI.Borders.empty(0, UiSupport.PAD, UiSupport.TIGHT, UiSupport.PAD)
+                },
+                BorderLayout.NORTH,
+            )
+            add(
+                JBScrollPane(incidentList).apply {
+                    border = JBUI.Borders.customLineTop(UiSupport.hairline)
+                    viewport.background = UIUtil.getListBackground()
+                },
+                BorderLayout.CENTER,
+            )
+        }
+
         val splitter = OnePixelSplitter(false, 0.42f).apply {
-            firstComponent = incidentsBox
+            firstComponent = feed
             secondComponent = detail
         }
-        val root = JPanel(BorderLayout()).apply {
-            add(top, BorderLayout.NORTH)
-            add(splitter, BorderLayout.CENTER)
-        }
-        setContent(root)
+
+        setContent(
+            JPanel(BorderLayout()).apply {
+                add(header, BorderLayout.NORTH)
+                add(splitter, BorderLayout.CENTER)
+            },
+        )
     }
 
-    fun refresh() {
+    override fun component(): JComponent = this
+
+    override fun refresh() {
         val stats = engine.stats()
-        renderStatus(stats)
-        monitoredCard.value(stats.pluginsMonitored.toString(), UIUtil.getLabelForeground())
-        blockedCard.value(stats.blockedAttempts.toString(), if (stats.blockedAttempts > 0) UiSupport.high else UIUtil.getLabelForeground())
-        driftCard.value(stats.behaviorChanges.toString(), if (stats.behaviorChanges > 0) UiSupport.high else UIUtil.getLabelForeground())
-        criticalCard.value(stats.criticalIncidents.toString(), if (stats.criticalIncidents > 0) UiSupport.critical else UIUtil.getLabelForeground())
-        setupPanel.isVisible = !stats.agentInstalled
+        statusBanner.render(stats)
+        setupCard.isVisible = !stats.agentInstalled
+
+        monitoredTile.set(stats.pluginsMonitored.toString(), UIUtil.getLabelForeground())
+        preventedTile.set(stats.blockedAttempts.toString(), if (stats.blockedAttempts > 0) UiSupport.high else UIUtil.getLabelForeground())
+        preventedTile.share(stats.blockedAttempts, stats.eventsRecorded)
+        driftTile.set(stats.behaviorChanges.toString(), if (stats.behaviorChanges > 0) UiSupport.high else UIUtil.getLabelForeground())
+        criticalTile.set(stats.criticalIncidents.toString(), if (stats.criticalIncidents > 0) UiSupport.critical else UIUtil.getLabelForeground())
 
         val incidents = engine.incidents()
-        val previouslySelected = selectedId
+        val previous = selectedId
         incidentModel.clear()
         incidents.forEach { incidentModel.addElement(it) }
-        val index = incidents.indexOfFirst { it.id == previouslySelected }
+        val index = incidents.indexOfFirst { it.id == previous }
         when {
-            index >= 0 -> incidentList.selectedIndex = index
+            index >= 0 -> {
+                incidentList.selectedIndex = index
+                detail.show(incidents[index])
+            }
             incidents.isNotEmpty() -> incidentList.selectedIndex = 0
             else -> detail.show(null)
         }
     }
 
-    private fun renderStatus(stats: FenceStats) {
-        when {
-            !stats.agentInstalled -> {
-                statusIcon.icon = AllIcons.General.Warning
-                statusLine.text = "Protection INACTIVE - agent not attached"
-                statusLine.foreground = UiSupport.high
-                statusDetail.text = "Start the IDE with -javaagent:plugin-fence-agent.jar (see setup below)."
-            }
-            !stats.providerRegistered -> {
-                statusIcon.icon = AllIcons.General.Warning
-                statusLine.text = "Protection STARTING"
-                statusLine.foreground = UiSupport.medium
-                statusDetail.text = stats.agentInfo
-            }
-            !stats.enforcementEnabled -> {
-                statusIcon.icon = AllIcons.General.Information
-                statusLine.text = "Protection MONITOR ONLY - policies are not enforced"
-                statusLine.foreground = UiSupport.medium
-                statusDetail.text = "Tools > PluginFence > Enforce Policies to re-enable blocking. " + diagnostics(stats)
-            }
-            else -> {
-                statusIcon.icon = AllIcons.General.InspectionsOK
-                statusLine.text = "Protection ACTIVE"
-                statusLine.foreground = UiSupport.allowed
-                statusDetail.text = diagnostics(stats)
-            }
+    private fun tiles(): JComponent = JPanel(GridLayout(1, 4, JBUI.scale(UiSupport.GAP), 0)).apply {
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+        add(monitoredTile)
+        add(preventedTile)
+        add(driftTile)
+        add(criticalTile)
+    }
+
+    private fun selectFirstCritical() {
+        val incidents = engine.incidents()
+        val index = incidents.indexOfFirst { it.riskLevel == FenceRisk.CRITICAL }
+        if (index >= 0) {
+            incidentList.selectedIndex = index
+            incidentList.ensureIndexIsVisible(index)
         }
-        statusLine.font = JBFont.label().asBold()
     }
 
-    private fun diagnostics(stats: FenceStats): String {
-        val d = stats.agentDiagnostics
-        if (d.isEmpty()) return stats.agentInfo
-        return "${d["classes.instrumented"] ?: "0"} plugin classes instrumented, " +
-            "${d["callSites.rewritten"] ?: "0"} call sites guarded, ${d["rules"] ?: "?"} interception rules - ${stats.agentInfo}"
+    // --- toolbar ----------------------------------------------------------------------------------
+
+    private fun buildToolbar(): JComponent {
+        val group = DefaultActionGroup()
+        group.add(object : ToggleAction("Enforce Policies", "Block and prompt, instead of only recording", AllIcons.General.InspectionsOK), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+            override fun isSelected(e: AnActionEvent) = engine.enforcementEnabled
+
+            override fun setSelected(e: AnActionEvent, state: Boolean) = engine.setEnforcement(state)
+
+            override fun update(e: AnActionEvent) {
+                super.update(e)
+                e.presentation.isEnabled = engine.agentAvailable()
+                e.presentation.description = if (engine.agentAvailable()) {
+                    "Block and prompt, instead of only recording"
+                } else {
+                    "Unavailable: the PluginFence agent is not attached"
+                }
+            }
+        })
+        group.addSeparator()
+        group.add(object : AnAction("Export Incident", "Save the selected incident and its chain as JSON", AllIcons.ToolbarDecorator.Export), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = incidentList.selectedValue != null
+            }
+
+            override fun actionPerformed(e: AnActionEvent) {
+                incidentList.selectedValue?.let { IncidentExport.export(it, engine) }
+            }
+        })
+        group.addSeparator()
+        group.add(object : AnAction("Clear Activity History", "Remove recorded events and incidents", AllIcons.Actions.GC), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+            override fun actionPerformed(e: AnActionEvent) {
+                val answer = Messages.showYesNoDialog(
+                    e.project,
+                    "Remove all recorded PluginFence events and incidents?",
+                    "Clear Activity History",
+                    Messages.getQuestionIcon(),
+                )
+                if (answer == Messages.YES) engine.clearHistory()
+            }
+        })
+        group.add(object : AnAction("Reset Behavior Baselines", "Forget learned plugin behaviour profiles and drift reports", AllIcons.Actions.Refresh), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+            override fun actionPerformed(e: AnActionEvent) {
+                val answer = Messages.showYesNoDialog(
+                    e.project,
+                    "Forget all learned behaviour baselines and drift reports?",
+                    "Reset Behavior Baselines",
+                    Messages.getQuestionIcon(),
+                )
+                if (answer == Messages.YES) engine.resetBaselines()
+            }
+        })
+        val toolbar = ActionManager.getInstance().createActionToolbar("PluginFenceOverview", group, true)
+        toolbar.targetComponent = this
+        return toolbar.component
     }
 
-    /** A number with a caption, IntelliJ-flavoured. */
-    private class StatCard(caption: String) : JBPanel<StatCard>(BorderLayout()) {
-        private val value = JBLabel("0").apply { font = JBFont.label().deriveFont(Font.BOLD, JBFont.label().size2D + 10f) }
-        private val label = JBLabel(caption).apply { foreground = UIUtil.getContextHelpForeground(); font = JBFont.small() }
+    // --- pieces -------------------------------------------------------------------------------------
+
+    /**
+     * States the protection posture in a sentence, not a status LED: what is on, what that means,
+     * and - when something is off - the single next step to fix it.
+     */
+    private class StatusBanner : FenceCard() {
+
+        private val icon = JBLabel(AllIcons.General.InspectionsOK)
+        private val title = UiSupport.hero("")
+        private val pill = Pill("", UiSupport.allowed)
+        private val detail = WrappedText().muted()
 
         init {
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(JBUI.CurrentTheme.ToolWindow.borderColor(), 1),
-                JBUI.Borders.empty(8, 12),
-            )
-            background = UIUtil.getPanelBackground()
-            add(value, BorderLayout.CENTER)
-            add(label, BorderLayout.SOUTH)
+            padding(12, 14, 12, 16)
+            icon.verticalAlignment = SwingConstants.TOP
+            icon.border = JBUI.Borders.empty(4, 2, 0, 10)
+            add(icon, BorderLayout.WEST)
+            add(UiSupport.column(UiSupport.TIGHT, UiSupport.row(UiSupport.GAP, title, pill), detail), BorderLayout.CENTER)
         }
 
-        fun value(text: String, color: java.awt.Color) {
+        fun render(stats: FenceStats) {
+            val posture = describe(stats)
+            val (color, headline, state, text) = posture
+            accent = color
+            icon.icon = posture.icon
+            title.text = headline
+            title.foreground = UIUtil.getLabelForeground()
+            pill.text = state
+            pill.color = color
+            detail.text = text
+            revalidate()
+            repaint()
+        }
+
+        private data class Posture(
+            val color: Color,
+            val headline: String,
+            val state: String,
+            val detail: String,
+            val icon: Icon,
+        )
+
+        private fun describe(stats: FenceStats): Posture = when {
+            !stats.agentInstalled -> Posture(
+                UiSupport.high,
+                "PluginFence is watching nothing yet",
+                "PROTECTION INACTIVE",
+                "The JVM agent is not attached, so plugin file, network and process calls are invisible to " +
+                    "PluginFence. Attach it with the VM option below and restart the IDE.",
+                AllIcons.General.Warning,
+            )
+            !stats.providerRegistered -> Posture(
+                UiSupport.medium,
+                "Protection is starting",
+                "PROTECTION STARTING",
+                "The agent is attached and instrumenting plugin classes. " + stats.agentInfo,
+                AllIcons.General.Information,
+            )
+            !stats.enforcementEnabled -> Posture(
+                UiSupport.medium,
+                "Recording only - nothing is being blocked",
+                "MONITOR ONLY",
+                "Every plugin operation is classified and logged, but policies are not enforced. " +
+                    "Turn \"Enforce Policies\" back on in the toolbar to start blocking. " + diagnostics(stats),
+                AllIcons.General.Information,
+            )
+            else -> Posture(
+                UiSupport.allowed,
+                "Third-party plugins are fenced in",
+                "PROTECTION ACTIVE",
+                "Sensitive files, secret environment variables, outbound connections and process launches are " +
+                    "checked against your policy before they happen. " + diagnostics(stats),
+                AllIcons.General.InspectionsOK,
+            )
+        }
+
+        private fun diagnostics(stats: FenceStats): String {
+            val d = stats.agentDiagnostics
+            if (d.isEmpty()) return stats.agentInfo
+            return "${d["classes.instrumented"] ?: "0"} plugin classes instrumented, " +
+                "${d["callSites.rewritten"] ?: "0"} call sites guarded, ${d["rules"] ?: "?"} interception rules."
+        }
+    }
+
+    /**
+     * A headline number that is also a shortcut. Every number on this tab answers "where do I look
+     * next?", so clicking one takes you to the tab that can act on it.
+     */
+    private class StatTile(caption: String, footnote: String, onOpen: () -> Unit) : FenceCard() {
+
+        private val value = UiSupport.metric("0")
+        private val donut = Donut(40).apply { isVisible = false }
+
+        init {
+            padding(10, 14, 10, 12)
+            add(
+                UiSupport.column(
+                    2,
+                    UiSupport.sectionLabel(caption),
+                    value,
+                    UiSupport.hint(footnote),
+                ),
+                BorderLayout.CENTER,
+            )
+            add(JPanel(GridBagLayout()).apply { isOpaque = false; add(donut, GridBagConstraints()) }, BorderLayout.EAST)
+            onClick(onOpen)
+        }
+
+        fun set(text: String, color: Color) {
             value.text = text
             value.foreground = color
         }
-    }
 
-    private inner class IncidentRenderer : ColoredListCellRenderer<Incident>() {
-        override fun customizeCellRenderer(list: JList<out Incident>, value: Incident, index: Int, selected: Boolean, hasFocus: Boolean) {
-            icon = if (value.riskLevel >= FenceRisk.HIGH) AllIcons.General.Error else AllIcons.General.Warning
-            append(value.riskLevel.label.uppercase() + "  ", UiSupport.riskAttributes(value.riskLevel))
-            append(value.title, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-            append("   ${value.pluginName} ${value.pluginVersion}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-            append("   ${UiSupport.time(value.timestamp)}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
-            border = JBUI.Borders.empty(4, 8)
+        /** Shows what share of all observed operations this number represents. */
+        fun share(part: Long, total: Long) {
+            if (total <= 0) {
+                donut.isVisible = false
+                return
+            }
+            val fraction = part.toFloat() / total
+            donut.isVisible = true
+            donut.set(fraction, if (part > 0) UiSupport.high else UiSupport.allowed, "${(fraction * 100).toInt()}%")
         }
     }
 
-    /** Shown only when the agent is missing: exact, copyable setup instructions. */
-    private class SetupPanel : JBPanel<SetupPanel>(BorderLayout()) {
+    /** Shown only when the agent is missing: the exact VM option, one click from the clipboard. */
+    private class SetupCard : FenceCard() {
+
         init {
-            border = JBUI.Borders.compound(JBUI.Borders.empty(0, 16, 12, 16), JBUI.Borders.customLine(UiSupport.high, 1))
-            val text = JBLabel(
-                "<html><b>Agent not active.</b> PluginFence can only observe and block plugin operations when its JVM agent is attached.<br>" +
-                    "Add the following to the IDE VM options (<i>Help &gt; Edit Custom VM Options</i>) and restart:<br>" +
-                    "<code>-javaagent:&lt;path&gt;/plugin-fence-agent.jar</code> (keep <code>plugin-fence-bootstrap.jar</code> next to it)<br>" +
-                    "For development: <code>./gradlew runFenceIde</code> starts a sandbox IDE with the agent attached.</html>",
-            ).apply { border = JBUI.Borders.empty(8, 10) }
-            add(text, BorderLayout.CENTER)
+            tint = UiSupport.high
+            padding(12, 14, 12, 14)
+            val vmOption = "-javaagent:<path>/plugin-fence-agent.jar"
+            add(
+                UiSupport.column(
+                    UiSupport.TIGHT,
+                    UiSupport.subheading("Attach the agent to turn protection on"),
+                    WrappedText(
+                        "Add this to Help > Edit Custom VM Options and restart the IDE. Keep " +
+                            "plugin-fence-bootstrap.jar next to the agent jar.",
+                    ).muted(),
+                    UiSupport.row(
+                        UiSupport.GAP,
+                        UiSupport.mono(vmOption).apply { foreground = UiSupport.high },
+                        JButton("Copy", AllIcons.Actions.Copy).apply {
+                            addActionListener { CopyPasteManager.getInstance().setContents(StringSelection(vmOption)) }
+                        },
+                    ),
+                    UiSupport.hint("Developing PluginFence? ./gradlew runFenceIde starts a sandbox IDE with the agent already attached."),
+                ),
+                BorderLayout.CENTER,
+            )
             isVisible = false
+        }
+    }
+
+    /** Two lines per incident: what happened, and everything needed to triage it. */
+    private class IncidentRow : JBPanel<IncidentRow>(BorderLayout(JBUI.scale(UiSupport.GAP), 0)), ListCellRenderer<Incident> {
+
+        private val title = JBLabel().apply { font = JBFont.label().asBold() }
+        private val subtitle = JBLabel().apply { font = JBFont.small() }
+        private val pill = Pill("", UiSupport.info)
+        private var stripe: Color = UiSupport.info
+
+        init {
+            isOpaque = true
+            border = JBUI.Borders.empty(8, 14, 8, 12)
+            add(UiSupport.column(2, title, subtitle), BorderLayout.CENTER)
+            add(JPanel(GridBagLayout()).apply { isOpaque = false; add(pill, GridBagConstraints()) }, BorderLayout.EAST)
+        }
+
+        override fun getListCellRendererComponent(
+            list: JList<out Incident>,
+            value: Incident,
+            index: Int,
+            selected: Boolean,
+            focused: Boolean,
+        ): Component {
+            background = if (selected) UIUtil.getListSelectionBackground(true) else UIUtil.getListBackground()
+            val foreground = if (selected) UIUtil.getListSelectionForeground(true) else UIUtil.getListForeground()
+            stripe = UiSupport.riskColor(value.riskLevel)
+
+            title.text = value.title
+            title.foreground = foreground
+            subtitle.text = buildString {
+                append(value.pluginName)
+                if (value.pluginVersion.isNotBlank()) append(' ').append(value.pluginVersion)
+                append("   ").append(UiSupport.ago(value.timestamp))
+                append("   ").append(value.chain.size).append(if (value.chain.size == 1) " step" else " steps")
+            }
+            subtitle.foreground = if (selected) foreground else UIUtil.getContextHelpForeground()
+            pill.text = "${value.riskLevel.label.uppercase()} ${value.riskScore}"
+            pill.color = if (selected) foreground else stripe
+            return this
+        }
+
+        override fun paintComponent(g: java.awt.Graphics) {
+            super.paintComponent(g)
+            g.color = stripe
+            g.fillRect(0, 0, JBUI.scale(3), height)
         }
     }
 }
 
-/** Renders one incident as a vertical attack chain: step, arrow, step, ..., outcome. */
-class IncidentDetailPanel(private val engine: FenceEngine) : JBPanel<IncidentDetailPanel>(BorderLayout()) {
+/**
+ * One incident, told as a story: what the plugin did, step by step, and how it ended.
+ *
+ * The chain is drawn on a single vertical rail with numbered nodes so the causal order is obvious
+ * at a glance - the whole point of correlation is that step 3 only matters because steps 1 and 2
+ * happened first.
+ */
+class IncidentDetailPanel(private val engine: FenceEngine, private val navigator: FenceNavigator) :
+    JBPanel<IncidentDetailPanel>(BorderLayout()) {
 
-    private val content = JPanel().apply {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque = false
-        border = JBUI.Borders.empty(12, 16)
+    private val content = UiSupport.column(0).apply { border = JBUI.Borders.empty(UiSupport.PAD) }
+
+    private val scroll = JBScrollPane(content).apply {
+        border = JBUI.Borders.empty()
+        verticalScrollBar.unitIncrement = JBUI.scale(16)
     }
 
+    private val empty = UiSupport.emptyState(
+        "Nothing selected",
+        "Pick an incident on the left to replay what the plugin attempted, step by step.",
+        AllIcons.General.Information,
+    )
+
+    private var showingEmpty = false
+
     init {
-        add(JBScrollPane(content).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
-        show(null)
+        add(empty, BorderLayout.CENTER)
+        showingEmpty = true
     }
 
     fun show(incident: Incident?) {
-        content.removeAll()
         if (incident == null) {
-            content.add(UiSupport.hint("Select an incident to see the attack chain."))
+            if (!showingEmpty) {
+                remove(scroll)
+                add(empty, BorderLayout.CENTER)
+                showingEmpty = true
+            }
+            content.removeAll()
         } else {
-            val title = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-                isOpaque = false
-                alignmentX = Component.LEFT_ALIGNMENT
-                add(UiSupport.badge(incident.riskLevel.label, UiSupport.riskColor(incident.riskLevel)))
-                add(UiSupport.heading(incident.title))
+            if (showingEmpty) {
+                remove(empty)
+                add(scroll, BorderLayout.CENTER)
+                showingEmpty = false
             }
-            content.add(title)
-            content.add(Box.createVerticalStrut(JBUI.scale(4)))
-            content.add(left(JBLabel("${incident.pluginName} ${incident.pluginVersion}   -   ${UiSupport.dateTime(incident.timestamp)}").apply {
-                foreground = UIUtil.getContextHelpForeground()
-            }))
-            content.add(Box.createVerticalStrut(JBUI.scale(10)))
-            content.add(left(JBLabel("<html><div style='width:420px'>${escape(incident.summary)}</div></html>")))
-            content.add(Box.createVerticalStrut(JBUI.scale(14)))
+            content.removeAll()
+            render(incident)
+        }
+        revalidate()
+        repaint()
+    }
 
-            incident.chain.forEachIndexed { i, step ->
-                content.add(left(stepPanel(i + 1, step)))
-                content.add(left(arrow()))
-            }
-            content.add(left(outcomePanel(incident)))
-            content.add(Box.createVerticalStrut(JBUI.scale(10)))
-            content.add(left(JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-                isOpaque = false
-                add(javax.swing.JButton("Export as JSON", AllIcons.ToolbarDecorator.Export).apply {
+    private fun render(incident: Incident) {
+        val color = UiSupport.riskColor(incident.riskLevel)
+        val meter = RiskMeter(150, 7).apply { set(incident.riskScore, color) }
+
+        content.add(UiSupport.row(UiSupport.GAP, Pill(incident.riskLevel.label.uppercase(), color), UiSupport.heading(incident.title)))
+        content.add(UiSupport.spacer(UiSupport.TIGHT))
+        content.add(
+            UiSupport.caption(
+                buildString {
+                    append(incident.pluginName)
+                    if (incident.pluginVersion.isNotBlank()) append(' ').append(incident.pluginVersion)
+                    append("   ").append(UiSupport.dateTime(incident.timestamp))
+                },
+            ),
+        )
+        content.add(UiSupport.spacer(UiSupport.GAP))
+        content.add(
+            UiSupport.row(
+                UiSupport.GAP,
+                meter,
+                JBLabel("${incident.riskScore} / 100").apply { font = JBFont.label().asBold(); foreground = color },
+            ),
+        )
+        content.add(UiSupport.spacer(UiSupport.GAP))
+        content.add(WrappedText(incident.summary))
+        content.add(UiSupport.spacer(UiSupport.PAD))
+
+        content.add(UiSupport.sectionLabel("Attack chain"))
+        content.add(UiSupport.spacer(UiSupport.GAP))
+        incident.chain.forEachIndexed { i, event ->
+            content.add(ChainStep(i + 1, i == 0, false, UiSupport.verdictColor(event.verdict), stepCard(event)))
+        }
+        content.add(ChainOutcome(outcomeColor(incident), outcomeCard(incident)))
+
+        content.add(UiSupport.spacer(UiSupport.PAD))
+        content.add(
+            UiSupport.row(
+                UiSupport.TIGHT + 2,
+                JButton("Export as JSON", AllIcons.ToolbarDecorator.Export).apply {
                     addActionListener { IncidentExport.export(incident, engine) }
-                })
-            }))
-        }
-        content.revalidate()
-        content.repaint()
+                },
+                JButton("Show plugin activity").apply {
+                    addActionListener { navigator.openActivityFor(incident.pluginName) }
+                },
+            ),
+        )
     }
 
-    private fun stepPanel(index: Int, event: FenceEvent): JComponent {
-        val panel = JBPanel<JBPanel<*>>(BorderLayout(JBUI.scale(10), 0)).apply {
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(UiSupport.verdictColor(event.verdict), 0, 3, 0, 0),
-                JBUI.Borders.empty(6, 10),
-            )
-            background = UIUtil.getPanelBackground()
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(64))
+    private fun stepCard(event: FenceEvent): JComponent {
+        val color = UiSupport.verdictColor(event.verdict)
+        val card = FenceCard().apply {
+            accent = color
+            padding(8, 12, 8, 10)
         }
-        val time = JBLabel(UiSupport.time(event.timestamp)).apply { foreground = UIUtil.getContextHelpForeground(); font = JBFont.small() }
-        val what = JBLabel("<html><b>$index. ${event.actionLabel}</b> &nbsp; <code>${escape(UiSupport.shorten(engine.sensitivePaths.displayPath(event.target), 70))}</code></html>")
-        val why = JBLabel(event.reason).apply { foreground = UIUtil.getContextHelpForeground(); font = JBFont.small() }
-        val text = JPanel().apply {
-            isOpaque = false
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(what); add(why)
-        }
-        panel.add(time, BorderLayout.WEST)
-        panel.add(text, BorderLayout.CENTER)
-        panel.add(UiSupport.badge(event.decisionLabel.substringBefore(" "), UiSupport.verdictColor(event.verdict)), BorderLayout.EAST)
-        return panel
+        card.add(
+            JBLabel(UiSupport.time(event.timestamp)).apply {
+                foreground = UIUtil.getContextHelpForeground()
+                font = JBFont.small()
+                border = JBUI.Borders.emptyRight(UiSupport.GAP)
+            },
+            BorderLayout.WEST,
+        )
+        card.add(
+            UiSupport.column(
+                2,
+                UiSupport.row(
+                    6,
+                    JBLabel(event.actionLabel, UiSupport.operationIcon(event.operation), SwingConstants.LEFT).apply { font = JBFont.label().asBold() },
+                    UiSupport.mono(UiSupport.shorten(engine.sensitivePaths.displayPath(event.target), 64)).apply {
+                        toolTipText = event.target
+                    },
+                ),
+                UiSupport.hint(event.reason),
+            ),
+            BorderLayout.CENTER,
+        )
+        card.add(
+            JPanel(GridBagLayout()).apply {
+                isOpaque = false
+                add(Pill(UiSupport.verdictShort(event.verdict), color), GridBagConstraints())
+            },
+            BorderLayout.EAST,
+        )
+        return card
     }
 
-    private fun arrow(): JComponent = JBLabel("↓").apply {
-        foreground = UIUtil.getContextHelpForeground()
-        font = JBFont.label().deriveFont(JBFont.label().size2D + 4f)
-        border = JBUI.Borders.empty(2, 22)
+    private fun outcomeCard(incident: Incident): JComponent {
+        val color = outcomeColor(incident)
+        val card = FenceCard().apply {
+            tint = color
+            padding(10, 14, 10, 14)
+        }
+        val headline = incident.chain.lastOrNull()?.let { UiSupport.verdictShort(it.verdict) } ?: "RECORDED"
+        card.add(
+            UiSupport.column(
+                UiSupport.TIGHT,
+                UiSupport.row(
+                    UiSupport.GAP,
+                    Pill(headline, color, solid = true),
+                    JBLabel("Outcome").apply { font = JBFont.label().asBold() },
+                ),
+                WrappedText(incident.outcome),
+            ),
+            BorderLayout.CENTER,
+        )
+        return card
     }
 
-    private fun outcomePanel(incident: Incident): JComponent {
-        val last = incident.chain.lastOrNull()
-        val color = when {
-            last == null -> UiSupport.info
-            last.verdict == FenceVerdict.BLOCK -> UiSupport.blocked
-            last.verdict == FenceVerdict.ASK -> UiSupport.ask
-            else -> UiSupport.info
-        }
-        val panel = JBPanel<JBPanel<*>>(BorderLayout(JBUI.scale(10), 0)).apply {
-            border = BorderFactory.createCompoundBorder(JBUI.Borders.customLine(color, 1), JBUI.Borders.empty(8, 12))
-            background = UIUtil.getPanelBackground()
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(70))
-        }
-        val headline = JBLabel(last?.decisionLabel?.substringBefore(" ") ?: "RECORDED").apply {
-            font = JBFont.label().deriveFont(Font.BOLD, JBFont.label().size2D + 2f)
-            foreground = color
-        }
-        val text = JBLabel("<html>${escape(incident.outcome)}<br><b>Risk ${incident.riskScore} / 100 &nbsp; ${incident.riskLevel.label.uppercase()}</b></html>")
-        panel.add(headline, BorderLayout.WEST)
-        panel.add(text, BorderLayout.CENTER)
-        return panel
+    private fun outcomeColor(incident: Incident): Color = when (incident.chain.lastOrNull()?.verdict) {
+        FenceVerdict.BLOCK -> UiSupport.blocked
+        FenceVerdict.ASK -> UiSupport.ask
+        null -> UiSupport.info
+        else -> UiSupport.riskColor(incident.riskLevel)
     }
 
-    private fun left(c: JComponent): JComponent = c.apply { alignmentX = Component.LEFT_ALIGNMENT }
 
-    private fun escape(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }

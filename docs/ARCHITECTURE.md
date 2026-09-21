@@ -147,12 +147,25 @@ Both live in the IDE config directory; nothing leaves the machine.
 
 ### UI
 
-`FenceToolWindowFactory` hosts four tabs built from JetBrains UI components (`JBTable`,
-`JBList`, `OnePixelSplitter`, `SimpleToolWindowPanel`, `JBColor`, `AllIcons`):
-**Overview** (status, stat cards, incidents with the attack-chain view), **Activity** (filterable
-event table with details and permission actions), **Permissions** (per-plugin ALLOW/ASK/BLOCK
-matrix, always-allowed targets), **Drift** (version comparison table with NEW / UNCHANGED /
-REMOVED and a high-risk banner).
+`FenceToolWindowFactory` creates four tool-window `Content`s - so the IDE draws the tab strip
+natively and each tab carries its own `ActionToolbar` - and `FenceToolWindowController` owns them:
+
+| Tab | Content |
+| --- | --- |
+| **Overview** | Protection banner, four headline numbers that double as shortcuts into the other tabs, the incident feed, and the selected incident's attack chain on a numbered rail |
+| **Activity** | Filterable event table (search, risk, plugin, action, prevented-only) with a detail pane covering the target, the rule and the per-factor risk breakdown |
+| **Permissions** | One card per capability with an ALLOW / ASK / BLOCK switch, plus always-allowed targets |
+| **Drift** | Old-vs-new version diff with NEW / UNCHANGED / REMOVED rows and a high-risk banner |
+
+`ui/UiSupport.kt` is the design system the four tabs are assembled from: a semantic palette,
+a type scale, and painted components (`FenceCard`, `Pill`, `RiskMeter`, `SegmentedControl`,
+`ChainStep`, `Donut`, `WrappedText`). Every colour and surface is derived from the active theme
+via `JBColor` / `UIUtil` / `ColorUtil` and every dimension goes through `JBUI.scale`, so the tool
+window follows light/dark, custom themes and IDE zoom without a second code path.
+
+Refreshes are coalesced (200 ms) and applied only to the visible tab; the others are marked stale
+and rebuilt when selected. During an attack, events arrive in bursts - refreshing a background tab
+would rebuild a combo box or switch the user is mid-click on, and burn EDT time nobody can see.
 
 ## 4. Demo plugin
 
