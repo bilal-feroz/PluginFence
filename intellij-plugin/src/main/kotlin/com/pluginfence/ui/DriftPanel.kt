@@ -12,7 +12,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.table.JBTable
+import com.intellij.ui.table.TableView
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -76,7 +76,7 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
     private val alarmText = WrappedText()
 
     private val model = ListTableModel<Row>()
-    private val table = JBTable(model)
+    private val table = TableView(model)
     private val factors = UiSupport.column(4)
 
     // Renderers are reused: getRenderer() is called for every cell paint, so allocating a Swing
@@ -129,9 +129,8 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         table.setShowGrid(false)
         table.intercellSpacing = Dimension(0, 0)
         table.rowHeight = JBUI.scale(28)
-        table.autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
+        table.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
         table.emptyText.text = "Nothing recorded for this plugin yet"
-        applyColumnWidths()
 
         val header = UiSupport.column(UiSupport.GAP, alarm, headerCard).apply {
             border = JBUI.Borders.empty(UiSupport.PAD, UiSupport.PAD, UiSupport.GAP, UiSupport.PAD)
@@ -229,7 +228,6 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         oldVersionLabel = previous?.version ?: "-"
         newVersionLabel = newest.version
         model.columnInfos = columns()
-        applyColumnWidths()
 
         when {
             drift != null && drift.hasChanges -> {
@@ -306,13 +304,6 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         factors.repaint()
         headerCard.revalidate()
         headerCard.repaint()
-    }
-
-    private fun applyColumnWidths() {
-        if (table.columnModel.columnCount < COLUMN_COUNT) return
-        listOf(140, 330, 110, 110, 120).forEachIndexed { i, w ->
-            table.columnModel.getColumn(i).preferredWidth = JBUI.scale(w)
-        }
     }
 
     private fun columns(): Array<ColumnInfo<Row, String>> =
@@ -392,6 +383,8 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
     private inner class GroupColumn : ColumnInfo<Row, String>("Behaviour") {
         override fun valueOf(item: Row) = item.group
 
+        override fun getWidth(table: JTable) = JBUI.scale(150)
+
         override fun getRenderer(item: Row?) = groupRenderer
     }
 
@@ -404,17 +397,23 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
     private inner class OldColumn : ColumnInfo<Row, String>(oldVersionLabel) {
         override fun valueOf(item: Row) = if (item.inOld) PRESENT else ABSENT
 
+        override fun getWidth(table: JTable) = JBUI.scale(110)
+
         override fun getRenderer(item: Row?) = presenceRenderer
     }
 
     private inner class NewColumn : ColumnInfo<Row, String>(newVersionLabel) {
         override fun valueOf(item: Row) = if (item.inNew) PRESENT else ABSENT
 
+        override fun getWidth(table: JTable) = JBUI.scale(110)
+
         override fun getRenderer(item: Row?) = presenceRenderer
     }
 
     private inner class StatusColumn : ColumnInfo<Row, String>("Status") {
         override fun valueOf(item: Row) = item.status
+
+        override fun getWidth(table: JTable) = JBUI.scale(130)
 
         override fun getRenderer(item: Row?) = statusRenderer
     }
@@ -496,6 +495,5 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         const val UNCHANGED = "UNCHANGED"
         const val PRESENT = "✓"
         const val ABSENT = "–"
-        const val COLUMN_COUNT = 5
     }
 }

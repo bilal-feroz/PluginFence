@@ -40,7 +40,7 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
 
     private val listModel = DefaultListModel<PluginInfo>()
     private val list = JBList(listModel)
-    private val detail = JPanel(BorderLayout()).apply { isOpaque = false }
+    private val detail = Stack(BorderLayout())
     private var selectedId: String? = null
     private var updating = false
     private var renderedSignature: String? = null
@@ -82,6 +82,7 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
                 secondComponent = JBScrollPane(detail).apply {
                     border = JBUI.Borders.empty()
                     verticalScrollBar.unitIncrement = JBUI.scale(16)
+                    horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
                 }
             },
         )

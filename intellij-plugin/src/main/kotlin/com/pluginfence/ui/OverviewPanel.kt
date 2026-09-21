@@ -445,6 +445,7 @@ class IncidentDetailPanel(private val engine: FenceEngine, private val navigator
     private val scroll = JBScrollPane(content).apply {
         border = JBUI.Borders.empty()
         verticalScrollBar.unitIncrement = JBUI.scale(16)
+        horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
     }
 
     private val empty = UiSupport.emptyState(

@@ -16,7 +16,7 @@ import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.table.JBTable
+import com.intellij.ui.table.TableView
 import com.intellij.util.ui.ColumnInfo
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -65,7 +65,9 @@ class ActivityPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(tru
     private val counter = JBLabel().apply { font = JBFont.small(); foreground = UIUtil.getContextHelpForeground() }
 
     private val model = ListTableModel<FenceEvent>(TimeColumn, PluginColumn, ActionColumn, TargetColumn, DecisionColumn, RiskColumn)
-    private val table = JBTable(model)
+    // TableView, not JBTable: only TableView consults ColumnInfo.getRenderer, which is what puts
+    // the verdict pill and the risk bar in their columns.
+    private val table = TableView(model)
     private val details = EventDetailsPanel(engine)
     private var selectedId: Long? = null
     private var allEvents: List<FenceEvent> = emptyList()
@@ -85,12 +87,17 @@ class ActivityPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(tru
         table.setShowGrid(false)
         table.intercellSpacing = Dimension(0, 0)
         table.rowHeight = JBUI.scale(28)
-        table.autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
+        table.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
         table.setAutoCreateRowSorter(true)
         table.emptyText.text = "No activity yet"
         table.emptyText.appendLine("Every file, environment, process and network call a third-party plugin makes shows up here.")
-        listOf(72, 170, 104, 380, 118, 110).forEachIndexed { i, width ->
+        // Every column but Target is capped at its natural width, so all the slack goes to the one
+        // column that can actually use it - the path or host, which is what people read.
+        listOf(78, 190, 112, 420, 132, 158).forEachIndexed { i, width ->
             table.columnModel.getColumn(i).preferredWidth = JBUI.scale(width)
+        }
+        listOf(0, 1, 2, 4, 5).forEach { i ->
+            table.columnModel.getColumn(i).maxWidth = table.columnModel.getColumn(i).preferredWidth
         }
         table.selectionModel.addListSelectionListener {
             if (!it.valueIsAdjusting) {
@@ -397,6 +404,7 @@ class EventDetailsPanel(private val engine: FenceEngine) : JBPanel<EventDetailsP
     private val scroll = JBScrollPane(content).apply {
         border = JBUI.Borders.empty()
         verticalScrollBar.unitIncrement = JBUI.scale(16)
+        horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
     }
 
     private val empty = UiSupport.emptyState(

@@ -19,6 +19,7 @@ import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.FontMetrics
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.GridBagConstraints
@@ -36,6 +37,7 @@ import javax.swing.BoxLayout
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.Scrollable
 import javax.swing.SwingConstants
 
 /**
@@ -333,8 +335,15 @@ open class FenceCard(private val arc: Int = 12) : JBPanel<FenceCard>(BorderLayou
     override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
 }
 
-/** A transparent container that fills the width it is given but never more height than it needs. */
-class Stack(layout: LayoutManager? = null) : JPanel() {
+/**
+ * A transparent container that fills the width it is given but never more height than it needs.
+ *
+ * It implements [Scrollable] so that inside a scroll pane it is pinned to the viewport width
+ * instead of growing to its widest child. Without that, one long path would widen the whole column
+ * and everything else - wrapped prose in particular - would be laid out off-screen behind a
+ * horizontal scrollbar.
+ */
+class Stack(layout: LayoutManager? = null) : JPanel(), Scrollable {
 
     /** Child -> the strut that precedes it, so a hidden child takes its spacing with it. */
     private val spacers = LinkedHashMap<Component, Component>()
@@ -344,6 +353,16 @@ class Stack(layout: LayoutManager? = null) : JPanel() {
         alignmentX = Component.LEFT_ALIGNMENT
         if (layout == null) setLayout(BoxLayout(this, BoxLayout.Y_AXIS)) else setLayout(layout)
     }
+
+    override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+
+    override fun getScrollableUnitIncrement(visible: java.awt.Rectangle, orientation: Int, direction: Int): Int = JBUI.scale(16)
+
+    override fun getScrollableBlockIncrement(visible: java.awt.Rectangle, orientation: Int, direction: Int): Int = visible.height
+
+    override fun getScrollableTracksViewportWidth(): Boolean = true
+
+    override fun getScrollableTracksViewportHeight(): Boolean = false
 
     /** Adds [c] preceded by a [gap]-high strut that is hidden whenever [c] is. */
     fun addSpaced(gap: Int, c: Component) {
@@ -721,8 +740,28 @@ class WrappedText(text: String = "") : JComponent() {
             result.add(line.toString())
         }
         cachedWidth = width
-        cachedLines = result
-        return result
+        cachedLines = result.flatMap { hardBreak(it, fm, width) }
+        return cachedLines
+    }
+
+    /**
+     * Breaks a run that has no space to wrap at - a long file path, a URL - so it stays inside the
+     * panel instead of running off the edge.
+     */
+    private fun hardBreak(line: String, fm: FontMetrics, width: Int): List<String> {
+        if (width <= 0 || fm.stringWidth(line) <= width) return listOf(line)
+        val parts = ArrayList<String>()
+        var start = 0
+        var end = 1
+        while (end <= line.length) {
+            if (end > start + 1 && fm.stringWidth(line.substring(start, end)) > width) {
+                parts.add(line.substring(start, end - 1))
+                start = end - 1
+            }
+            end++
+        }
+        if (start < line.length) parts.add(line.substring(start))
+        return parts
     }
 
     override fun getPreferredSize(): Dimension {
