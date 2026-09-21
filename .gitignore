@@ -22,3 +22,6 @@ Thumbs.db
 # Local
 local.properties
 *.log
+
+# Local release bundle collected by hand from the build outputs
+dist/
