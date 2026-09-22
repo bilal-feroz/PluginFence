@@ -26,6 +26,8 @@ class OpenAiCompatibleClient(
     private val model: String,
     connectTimeout: Duration = Duration.ofSeconds(10),
     private val requestTimeout: Duration = Duration.ofSeconds(90),
+    /** Called before sleeping out a rate limit, so the UI can say why it paused. */
+    private val onRetry: (attempt: Int, wait: Duration, status: Int) -> Unit = { _, _, _ -> },
 ) {
 
     private val http: HttpClient = HttpClient.newBuilder().connectTimeout(connectTimeout).build()
@@ -45,34 +47,80 @@ class OpenAiCompatibleClient(
 
     class ApiException(message: String, val status: Int = 0) : IOException(message)
 
-    fun chat(messages: JsonArray, tools: JsonArray?): Reply {
+    /**
+     * @param forceTool when set, the model must call that function instead of choosing freely.
+     *        Used to make a model that drifted into prose deliver a structured answer.
+     */
+    fun chat(messages: JsonArray, tools: JsonArray?, forceTool: String? = null): Reply {
         val body = JsonObject().apply {
             addProperty("model", model)
             add("messages", messages)
             if (tools != null && tools.size() > 0) {
                 add("tools", tools)
-                addProperty("tool_choice", "auto")
+                if (forceTool == null) {
+                    addProperty("tool_choice", "auto")
+                } else {
+                    add("tool_choice", JsonObject().apply {
+                        addProperty("type", "function")
+                        add("function", JsonObject().apply { addProperty("name", forceTool) })
+                    })
+                }
             }
         }
-        val builder = HttpRequest.newBuilder(URI.create("$endpoint/chat/completions"))
+        val request = HttpRequest.newBuilder(URI.create("$endpoint/chat/completions"))
             .timeout(requestTimeout)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
-        if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
+            .also { if (apiKey.isNotBlank()) it.header("Authorization", "Bearer $apiKey") }
+            .build()
 
-        val response = try {
-            http.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-        } catch (e: java.net.ConnectException) {
-            throw ApiException("Cannot connect to $endpoint (${e.message ?: "connection refused"})")
-        } catch (e: java.net.http.HttpTimeoutException) {
-            throw ApiException("The model did not answer within ${requestTimeout.seconds} s")
+        // Free tiers rate-limit aggressively (Groq: 8k tokens/minute), and an investigation that
+        // dies half way through is worse than one that waits a moment. Providers tell us how long
+        // to wait, so honour that rather than guessing.
+        var attempt = 0
+        while (true) {
+            val response = try {
+                http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+            } catch (e: java.net.ConnectException) {
+                throw ApiException("Cannot connect to $endpoint (${e.message ?: "connection refused"})")
+            } catch (e: java.net.http.HttpTimeoutException) {
+                throw ApiException("The model did not answer within ${requestTimeout.seconds} s")
+            }
+            if (response.statusCode() / 100 == 2) return parse(response.body())
+
+            val retryable = response.statusCode() == 429 || response.statusCode() in 500..599
+            if (!retryable || attempt >= MAX_RETRIES) {
+                throw ApiException("HTTP ${response.statusCode()} from $endpoint: ${errorMessage(response.body())}", response.statusCode())
+            }
+            val wait = retryDelay(response, attempt)
+            onRetry(attempt + 1, wait, response.statusCode())
+            try {
+                Thread.sleep(wait.toMillis())
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw ApiException("Interrupted while waiting out a rate limit")
+            }
+            attempt++
         }
-        if (response.statusCode() / 100 != 2) {
-            throw ApiException("HTTP ${response.statusCode()} from $endpoint: ${errorMessage(response.body())}", response.statusCode())
-        }
-        return parse(response.body())
     }
+
+    /** `Retry-After` header, else the "try again in 1.5s" the provider puts in the error, else backoff. */
+    private fun retryDelay(response: HttpResponse<String>, attempt: Int): Duration {
+        val header = response.headers().firstValue("retry-after").orElse(null)?.trim()?.toDoubleOrNull()
+        if (header != null) return millis(header * 1000)
+
+        val match = Regex("try again in ([0-9.]+)\\s*(ms|s)", RegexOption.IGNORE_CASE).find(response.body())
+        if (match != null) {
+            val value = match.groupValues[1].toDoubleOrNull() ?: 0.0
+            val raw = if (match.groupValues[2].equals("ms", true)) value else value * 1000
+            // a little headroom: token buckets refill continuously and returning a hair early just fails again
+            return millis(raw + 500)
+        }
+        return millis((1000L shl attempt).toDouble())
+    }
+
+    private fun millis(value: Double): Duration = Duration.ofMillis(value.toLong().coerceIn(200L, MAX_WAIT_MS))
 
     private fun parse(body: String): Reply {
         val root = JsonParser.parseString(body).asJsonObject
@@ -111,4 +159,9 @@ class OpenAiCompatibleClient(
     private fun errorMessage(body: String): String = runCatching {
         JsonParser.parseString(body).asJsonObject.getAsJsonObject("error")?.get("message")?.asString
     }.getOrNull()?.take(300) ?: body.take(200).replace('\n', ' ')
+
+    private companion object {
+        const val MAX_RETRIES = 3
+        const val MAX_WAIT_MS = 30_000L
+    }
 }

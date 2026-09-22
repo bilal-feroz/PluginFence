@@ -11,16 +11,41 @@ cd "$(dirname "$0")/.."
 # nothing leaves the machine. Override with PLUGINFENCE_AI_ENDPOINT / PLUGINFENCE_AI_MODEL / PLUGINFENCE_AI_KEY.
 AI_ARGS=()
 EXIT_AFTER=15000
-AI_ENDPOINT="${PLUGINFENCE_AI_ENDPOINT:-http://127.0.0.1:11434/v1}"
-if [[ -n "${PLUGINFENCE_AI_ENDPOINT:-}" ]] || curl -sf --max-time 3 "${AI_ENDPOINT%/v1}/api/tags" >/dev/null 2>&1; then
+AI_ENDPOINT=""
+AI_MODEL=""
+AI_KEY="${PLUGINFENCE_AI_KEY:-}"
+if [[ -n "${PLUGINFENCE_AI_ENDPOINT:-}" ]]; then                       # explicit override wins
+  AI_ENDPOINT="$PLUGINFENCE_AI_ENDPOINT"
+  AI_MODEL="${PLUGINFENCE_AI_MODEL:-openai/gpt-oss-120b}"
+elif [[ -n "${GROQ_API_KEY:-}" ]]; then                                # a real hosted model, if we have a key
+  AI_ENDPOINT="https://api.groq.com/openai/v1"
+  AI_MODEL="${PLUGINFENCE_AI_MODEL:-${GROQ_MODEL:-openai/gpt-oss-120b}}"
+  AI_KEY="$GROQ_API_KEY"
+elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+  AI_ENDPOINT="https://api.openai.com/v1"
+  AI_MODEL="${PLUGINFENCE_AI_MODEL:-gpt-4.1-mini}"
+  AI_KEY="$OPENAI_API_KEY"
+elif curl -sf --max-time 3 "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then   # local fallback
+  AI_ENDPOINT="http://127.0.0.1:11434/v1"
   AI_MODEL="${PLUGINFENCE_AI_MODEL:-llama3.2:3b}"
+fi
+if [[ -n "$AI_ENDPOINT" ]]; then
   AI_ARGS=("-PaiEndpoint=$AI_ENDPOINT" "-PaiModel=$AI_MODEL" "-PaiAutoAnalyse=true")
-  [[ -n "${PLUGINFENCE_AI_KEY:-}" ]] && AI_ARGS+=("-PaiKey=$PLUGINFENCE_AI_KEY")
-  EXIT_AFTER=120000   # give a small local model time to finish its investigations before the IDE exits
+  # The key is passed by *inheriting* GROQ_API_KEY / OPENAI_API_KEY into the sandbox IDE, not as a
+  # Gradle property: -PaiKey becomes a -D JVM option, and IntelliJ writes its full JVM options into
+  # idea.log. A tool that audits credential handling should not leave a key in a log file.
+  export GROQ_API_KEY OPENAI_API_KEY
+  if [[ -n "${PLUGINFENCE_AI_KEY:-}" ]]; then
+    case "$AI_ENDPOINT" in
+      *groq.com*) export GROQ_API_KEY="$PLUGINFENCE_AI_KEY" ;;
+      *) export OPENAI_API_KEY="$PLUGINFENCE_AI_KEY" ;;
+    esac
+  fi
+  EXIT_AFTER=120000   # let the analyst finish its investigations before the IDE exits
   export PLUGINFENCE_SMOKE_AI=1
   echo "AI leg enabled: $AI_MODEL at $AI_ENDPOINT"
 else
-  echo "AI leg skipped: no model at $AI_ENDPOINT (start Ollama, or set PLUGINFENCE_AI_ENDPOINT)"
+  echo "AI leg skipped: set GROQ_API_KEY / OPENAI_API_KEY, or start Ollama on 127.0.0.1:11434"
 fi
 ./gradlew runFenceIdeUpdated -PdemoAutorun=normal,secret,exfil,process,attack "-PdemoExitAfter=$EXIT_AFTER" -PdemoOpenToolWindows=true "${AI_ARGS[@]}" --console=plain
 # Prefer python3, but on Windows that name may be a Store alias stub that does not run.

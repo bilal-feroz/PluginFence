@@ -55,11 +55,29 @@ class AiSettings : PersistentStateComponent<AiSettings.State> {
     val maxSteps: Int
         get() = state.maxSteps.coerceIn(2, 16)
 
-    /** Resolution order: system property, credential store, OPENAI_API_KEY environment variable. */
+    /**
+     * The models to try, in order. A busy or unavailable primary falls through to a smaller sibling
+     * on the same endpoint (same key, same protocol) before PluginFence gives up on models entirely
+     * and answers from its own rules. Free tiers throttle the big models first, so the backup is
+     * usually the *small* one.
+     */
+    fun modelChain(): List<String> {
+        val primary = model
+        val backups = AiProvider.suggestedModels(AiProvider.of(endpoint))
+            .filter { it != primary }
+            .take(1)
+        return listOf(primary) + backups
+    }
+
+    /**
+     * Resolution order: system property, IDE credential store, then the environment variable that
+     * matches the configured provider (`GROQ_API_KEY`, `OPENAI_API_KEY`, ...). The environment
+     * fallback is what lets a scripted run authenticate without the key ever touching a file.
+     */
     val apiKey: String
         get() = System.getProperty("pluginfence.ai.apiKey")
-            ?: runCatching { PasswordSafe.instance.getPassword(credentialAttributes()) }.getOrNull()
-            ?: System.getenv("OPENAI_API_KEY")
+            ?: runCatching { PasswordSafe.instance.getPassword(credentialAttributes()) }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: AiProvider.of(endpoint).environmentVariables.firstNotNullOfOrNull { System.getenv(it)?.takeIf { v -> v.isNotBlank() } }
             ?: ""
 
     /** True when a request could actually be made. Local endpoints (Ollama, LM Studio) need no key. */
@@ -79,7 +97,8 @@ class AiSettings : PersistentStateComponent<AiSettings.State> {
     fun isConfiguredQuick(onResolved: (() -> Unit)? = null): Boolean {
         if (!enabled) return false
         if (isLocalEndpoint(endpoint)) return true
-        if (System.getProperty("pluginfence.ai.apiKey") != null || !System.getenv("OPENAI_API_KEY").isNullOrBlank()) return true
+        if (System.getProperty("pluginfence.ai.apiKey") != null) return true
+        if (AiProvider.of(endpoint).environmentVariables.any { !System.getenv(it).isNullOrBlank() }) return true
         storedKeyPresent?.let { return it }
         ApplicationManager.getApplication().executeOnPooledThread {
             storedKeyPresent = storedApiKey().isNotBlank()

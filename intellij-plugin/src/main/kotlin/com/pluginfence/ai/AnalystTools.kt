@@ -37,58 +37,66 @@ object AnalystTools {
 
     const val SUBMIT = "submit_analysis"
 
-    /** Tool definitions in the OpenAI function-calling format. */
+    /**
+     * Tool definitions in the OpenAI function-calling format.
+     *
+     * Kept terse on purpose: the whole array is resent with every round of the conversation, so a
+     * paragraph of prose per tool is paid for four or five times in a single investigation. On a
+     * free tier (Groq: 8k tokens/minute) that difference decides whether an analysis finishes in
+     * one pass or stalls on rate limits. The detail that used to live here is in the system prompt,
+     * which is sent once.
+     */
     fun definitions(): JsonArray = JsonArray().apply {
-        add(tool("get_incident", "Full detail of one incident: the correlated chain of events with targets, verdicts, rule ids and risk factors.", obj {
-            prop("incident_id", "string", "The incident id"); required("incident_id")
+        add(tool("get_incident", "One incident: its correlated chain of events, verdicts, rules and risk factors.", obj {
+            prop("incident_id", "string", "Incident id"); required("incident_id")
         }))
-        add(tool("get_plugin_profile", "Behaviour baseline of every observed version of a plugin: capabilities used, hosts contacted, executables launched, sensitive-resource categories touched, event counts.", obj {
-            prop("plugin_id", "string", "The plugin id"); required("plugin_id")
+        add(tool("get_plugin_profile", "Behaviour baseline per observed version: capabilities, hosts, processes, sensitive resources.", obj {
+            prop("plugin_id", "string", "Plugin id"); required("plugin_id")
         }))
-        add(tool("get_behavior_drift", "What the newest version of a plugin does that the previous version never did, with the deterministic drift risk score.", obj {
-            prop("plugin_id", "string", "The plugin id"); required("plugin_id")
+        add(tool("get_behavior_drift", "What the new version does that the previous one never did, with its drift risk score.", obj {
+            prop("plugin_id", "string", "Plugin id"); required("plugin_id")
         }))
-        add(tool("get_recent_events", "The most recent intercepted operations of a plugin (newest first): operation, target, verdict, reason, rule, risk.", obj {
-            prop("plugin_id", "string", "The plugin id")
-            prop("limit", "integer", "How many events to return (default 20, max 60)")
+        add(tool("get_recent_events", "Recent intercepted operations, newest first.", obj {
+            prop("plugin_id", "string", "Plugin id")
+            prop("limit", "integer", "Default 12, max 40")
             required("plugin_id")
         }))
-        add(tool("get_policy", "The plugin's effective permission matrix (ALLOW/ASK/BLOCK per capability), which entries the user customised, always-allowed targets, and the shipped defaults.", obj {
-            prop("plugin_id", "string", "The plugin id"); required("plugin_id")
+        add(tool("get_policy", "Effective ALLOW/ASK/BLOCK matrix, user overrides, always-allowed targets, defaults.", obj {
+            prop("plugin_id", "string", "Plugin id"); required("plugin_id")
         }))
-        add(tool("get_risk_model", "How PluginFence scores risk: the deterministic weights, severity thresholds and policy precedence. Use it to explain scores accurately.", obj {}))
-        add(tool("list_plugins", "Third-party plugins PluginFence has seen, with version, vendor and trust status.", obj {}))
-        add(tool("get_plugin_manifest", "The plugin's own META-INF/plugin.xml as it ships: name, vendor, description, dependencies, extension points and actions it declares. Compare what it claims to be with what it was observed doing.", obj {
-            prop("plugin_id", "string", "The plugin id"); required("plugin_id")
+        add(tool("get_plugin_manifest", "The plugin's own plugin.xml: what it claims to be. Compare with what it did.", obj {
+            prop("plugin_id", "string", "Plugin id"); required("plugin_id")
         }))
-        add(tool(SUBMIT, "Submit the final analysis. Call this exactly once, after investigating. It ends the analysis.", obj {
-            prop("verdict", "string", "One of MALICIOUS, SUSPICIOUS, INCONCLUSIVE, LIKELY_BENIGN, BENIGN")
-            prop("confidence", "string", "One of HIGH, MEDIUM, LOW")
-            prop("headline", "string", "One sentence a developer can act on")
-            prop("narrative", "string", "Plain-English explanation in 2-5 short paragraphs: what happened, why it matters, what the evidence shows. Cite targets, versions and event ids.")
-            arr("evidence", "string", "Short bullet points of the concrete evidence relied on")
+        add(tool("get_risk_model", "PluginFence's risk weights, thresholds and policy precedence.", obj {}))
+        add(tool("list_plugins", "Third-party plugins seen, with version, vendor and trust status.", obj {}))
+        add(tool(SUBMIT, "Submit the final analysis. Call once, after investigating. Ends the analysis.", obj {
+            prop("verdict", "string", "MALICIOUS | SUSPICIOUS | INCONCLUSIVE | LIKELY_BENIGN | BENIGN")
+            prop("confidence", "string", "HIGH | MEDIUM | LOW")
+            prop("headline", "string", "One actionable sentence")
+            prop("narrative", "string", "2-4 short paragraphs citing targets, versions and event ids")
+            arr("evidence", "string", "Concrete evidence, one bullet each")
             add("recommendations", JsonObject().apply {
                 addProperty("type", "array")
-                addProperty("description", "Policy changes for this plugin. Only propose changes the evidence supports; prefer least privilege.")
+                addProperty("description", "Policy for this plugin; least privilege; only what the evidence supports")
                 add("items", obj {
-                    prop("capability", "string", "One of PROJECT_FILES, FILES_OUTSIDE_PROJECT, SENSITIVE_FILES, SECRET_ENVIRONMENT, NETWORK, PROCESS_EXECUTION")
-                    prop("decision", "string", "One of ALLOW, ASK, BLOCK")
+                    prop("capability", "string", "PROJECT_FILES | FILES_OUTSIDE_PROJECT | SENSITIVE_FILES | SECRET_ENVIRONMENT | NETWORK | PROCESS_EXECUTION")
+                    prop("decision", "string", "ALLOW | ASK | BLOCK")
                     prop("reason", "string", "Why")
                     required("capability", "decision", "reason")
                 })
             })
             add("target_changes", JsonObject().apply {
                 addProperty("type", "array")
-                addProperty("description", "Always-allowed targets to add (APPROVE) or remove (REVOKE): a host for NETWORK, an executable for PROCESS_EXECUTION, a directory for FILES_OUTSIDE_PROJECT.")
+                addProperty("description", "Always-allowed targets to add/remove: host, executable or directory")
                 add("items", obj {
-                    prop("action", "string", "APPROVE or REVOKE")
-                    prop("capability", "string", "The capability the target belongs to")
-                    prop("target", "string", "The host, executable or directory")
+                    prop("action", "string", "APPROVE | REVOKE")
+                    prop("capability", "string", "Capability it belongs to")
+                    prop("target", "string", "Host, executable or directory")
                     prop("reason", "string", "Why")
                     required("action", "capability", "target", "reason")
                 })
             })
-            arr("next_steps", "string", "What the developer should do next, if anything")
+            arr("next_steps", "string", "What the developer should do next")
             required("verdict", "confidence", "headline", "narrative")
         }))
     }
@@ -162,7 +170,7 @@ class EngineToolBackend(private val engine: FenceEngine) : ToolBackend {
         "get_incident" -> incident(arguments.str("incident_id"))
         "get_plugin_profile" -> profile(arguments.str("plugin_id"))
         "get_behavior_drift" -> drift(arguments.str("plugin_id"))
-        "get_recent_events" -> events(arguments.str("plugin_id"), arguments.get("limit")?.takeIf { it.isJsonPrimitive }?.asInt ?: 20)
+        "get_recent_events" -> events(arguments.str("plugin_id"), arguments.get("limit")?.takeIf { it.isJsonPrimitive }?.asInt ?: 12)
         "get_policy" -> policy(arguments.str("plugin_id"))
         "get_risk_model" -> riskModel()
         "list_plugins" -> plugins()
@@ -199,7 +207,7 @@ class EngineToolBackend(private val engine: FenceEngine) : ToolBackend {
     }
 
     private fun events(pluginId: String, limit: Int): ToolOutput {
-        val n = limit.coerceIn(1, 60)
+        val n = limit.coerceIn(1, 40)
         val events = engine.events().filter { pluginId.isBlank() || it.pluginId == pluginId }.take(n)
         val json = JsonArray().apply { events.forEach { add(eventJson(it)) } }
         val prevented = events.count { it.prevented }
@@ -280,7 +288,7 @@ class EngineToolBackend(private val engine: FenceEngine) : ToolBackend {
             addProperty("version", plain(tag(xml, "version")))
             addProperty("vendor", plain(tag(xml, "vendor")))
             addProperty("vendor_url", attribute(Regex("<vendor\\b([^>]*)>").find(xml)?.groupValues?.get(1) ?: "", "url"))
-            addProperty("description", plain(tag(xml, "description")).take(1200))
+            addProperty("description", plain(tag(xml, "description")).take(400))
             add("depends", JsonArray().apply { Regex("<depends\\b[^>]*>([^<]+)</depends>").findAll(xml).forEach { add(it.groupValues[1].trim()) } })
             add("extensions", JsonObject().apply { extensions.forEach { (k, v) -> addProperty(k, v) } })
             add("actions", JsonArray().apply { actions.forEach { add(it) } })

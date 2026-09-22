@@ -83,10 +83,19 @@ for log in logs:
     with open(log, encoding="utf-8", errors="ignore") as fh:
         lines = fh.readlines()
     for i, line in enumerate(lines):
-        if ("ERROR" in line or "Exception" in line) and ("com.pluginfence" in line or "PluginFence" in line) and "[PluginFence] INFO" not in line:
-            context = "".join(lines[i:i + 3]).strip()
-            if "com.pluginfence" in context or "PluginFence" in line:
-                suspicious.append(line.strip()[:200])
+        # SEVERE counts as well as ERROR: the platform logs it for API misuse and raises the red
+        # "IDE internal error" badge, which is exactly what must not appear during a demo. The demo
+        # plugin is ours too, so its errors matter as much as PluginFence's.
+        # Platform WARNs (slow indexing, file locks, missing sockets) are noise and are ignored -
+        # the sandbox emits them on every run regardless of what we do.
+        if "ERROR -" not in line and "SEVERE -" not in line:
+            continue
+        if "[PluginFence] INFO" in line:
+            continue
+        # A stack trace names the culprit in the frames just below the header.
+        context = "".join(lines[i:i + 12])
+        if any(owner in context for owner in ("com.pluginfence", "com.example.demohelper")):
+            suspicious.append(line.strip()[:200])
 detail = "" if not suspicious else ":\n     " + "\n     ".join(suspicious[:5])
 check(not suspicious, "no PluginFence errors/exceptions in idea.log" + detail)
 opened = any("PluginFence tool window opened" in line for log in logs for line in open(log, encoding="utf-8", errors="ignore"))

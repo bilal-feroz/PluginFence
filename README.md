@@ -250,16 +250,43 @@ these setup steps.
 
 *Settings → Tools → PluginFence* (or *Tools → PluginFence → Configure AI Analyst...*):
 
-| Setting | Value |
-| --- | --- |
-| Enable | on (off by default - nothing is sent until you opt in) |
-| Endpoint | `https://api.openai.com/v1`, or any OpenAI-compatible server, e.g. Ollama at `http://localhost:11434/v1` |
-| Model | `gpt-4.1-mini` (default), `gpt-5-mini`, or a local model such as `llama3.2:3b` |
-| API key | stored in the IDE credential store (`PasswordSafe`), never in a settings file; `OPENAI_API_KEY` is used as a fallback; local endpoints need none |
-| Auto-analyse | optionally run the analyst on every CRITICAL incident as it happens |
+Pick a **provider** and the endpoint and model fill themselves in:
 
-*Test Connection* makes one round trip. For scripted runs the same values can be passed on the
-command line: `./gradlew runFenceIdeUpdated -PaiEndpoint=http://127.0.0.1:11434/v1 -PaiModel=llama3.2:3b -PaiAutoAnalyse=true`.
+| Provider | Endpoint | Default model | Key |
+| --- | --- | --- | --- |
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-4.1-mini` | `OPENAI_API_KEY` |
+| **Groq** | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | `GROQ_API_KEY` - free tier is enough |
+| **Ollama (local)** | `http://localhost:11434/v1` | `llama3.2:3b` | none - nothing leaves the machine |
+| **Custom** | anything OpenAI-compatible (LM Studio, vLLM, a gateway) | - | optional |
+
+The key is stored in the IDE credential store (`PasswordSafe`), never in a settings file; the
+matching environment variable is used as a fallback. *Auto-analyse* optionally runs the analyst on
+every CRITICAL incident as it happens.
+
+**The analyst never fails closed.** Requests fall through a chain, and each step degrades only the
+prose - never the finding, because the evidence is local either way:
+
+```text
+configured model   →   backup model on the same endpoint   →   PluginFence's own rules
+(gpt-oss-120b)         (gpt-oss-20b, when the big one           (deterministic, no network,
+                        is rate limited)                         always available)
+```
+
+So there is no state in which the button produces an error card: no key, no network, a dead
+provider or an exhausted free tier all still yield a verdict, evidence and a proposed policy,
+labelled with where it came from. Rate limits are ridden out using the provider's own
+`Retry-After`, and a capable model (`gpt-4.1-mini`, `openai/gpt-oss-120b`) returns a structured
+verdict in a few seconds; a small local model that answers in prose is asked once more with the
+submission tool forced.
+
+*Test Connection* makes one round trip and reports an unavailable model by name. For scripted runs
+the same values can be passed on the command line - the key by environment variable, so it never
+reaches the IDE's logged JVM options:
+
+```bash
+GROQ_API_KEY=... ./gradlew runFenceIdeUpdated \
+  -PaiEndpoint=https://api.groq.com/openai/v1 -PaiModel=openai/gpt-oss-120b -PaiAutoAnalyse=true
+```
 
 What leaves the machine when the analyst runs, and only then: plugin ids, names, versions and
 manifests, redacted paths, host names, executable names, verdicts, rule ids and risk factors -

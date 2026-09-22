@@ -82,9 +82,14 @@ data class AnalysisResult(
     val error: String? = null,
     val promptTokens: Int = 0,
     val completionTokens: Int = 0,
+    /** True when produced by PluginFence's own rules rather than a language model. */
+    val deterministic: Boolean = false,
+    /** Set when the configured model could not be used and something else answered. */
+    val fallbackReason: String? = null,
 ) {
     val failed: Boolean get() = error != null
     val hasChanges: Boolean get() = recommendations.isNotEmpty() || targetChanges.isNotEmpty()
+    val toolCallCount: Int get() = trace.count { it.kind == TraceStep.Kind.TOOL }
 
     companion object {
         fun failure(task: AnalysisTask, model: String, startedAt: Long, trace: List<TraceStep>, message: String) = AnalysisResult(

@@ -25,6 +25,19 @@ object DemoSupport {
 
     const val PLUGIN_ID = "com.example.demo-helper"
 
+    /**
+     * Every action this plugin can register, in display order. 1.0.0 declares only the first;
+     * 1.1.0 declares all five. Looking them up by id keeps both builds working from one list and
+     * avoids expanding the action group by hand, which the platform forbids.
+     */
+    val ACTION_IDS = listOf(
+        "DemoHelper.Normal",
+        "DemoHelper.SecretRead",
+        "DemoHelper.Exfil",
+        "DemoHelper.Process",
+        "DemoHelper.Attack",
+    )
+
     /** Documentation-only address (RFC 5737 TEST-NET-2); never routable on the public internet. */
     const val EXFIL_HOST = "198.51.100.42"
     const val EXFIL_PORT = 8080

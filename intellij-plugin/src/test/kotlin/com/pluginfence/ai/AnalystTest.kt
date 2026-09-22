@@ -255,6 +255,37 @@ class AnalystTest {
         assertEquals(listOf("[not json"), result.nextSteps)
     }
 
+    /** 429 is the free-tier reality; the client must ride it out rather than surface it as a failure. */
+    @Test
+    fun `rate limits are retried using the delay the provider asks for`() {
+        val backend = ScriptedBackend()
+        var served = 0
+        server.removeContext("/v1/chat/completions")
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.readAllBytes()
+            served++
+            val (status, payload) = if (served == 1) {
+                429 to """{"error":{"message":"Rate limit reached. Please try again in 0.4s"}}"""
+            } else {
+                200 to toolCallReply(AnalystTools.SUBMIT to """{"verdict":"BENIGN","confidence":"LOW","headline":"fine","narrative":"n"}""")
+            }
+            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+
+        val steps = ArrayList<TraceStep>()
+        val started = System.currentTimeMillis()
+        val result = analyst(backend, onStep = { steps += it }).run(task)
+        val elapsed = System.currentTimeMillis() - started
+
+        assertNull(result.error, "a rate limit must not fail the analysis")
+        assertEquals(AnalystVerdict.BENIGN, result.verdict)
+        assertEquals(2, served, "the request should have been retried exactly once")
+        assertTrue(elapsed >= 400, "it should have waited the ~0.4s the provider asked for, waited ${elapsed}ms")
+    }
+
     @Test
     fun `enum parsing is tolerant`() {
         assertEquals(Capability.PROCESS_EXECUTION, EngineToolBackend.capability("Process Execution"))
@@ -267,6 +298,46 @@ class AnalystTest {
         assertNull(EngineToolBackend.decision("maybe"))
         assertEquals(AnalystVerdict.LIKELY_BENIGN, AnalystVerdict.parse("likely benign"))
         assertEquals(AnalystVerdict.INCONCLUSIVE, AnalystVerdict.parse("¯\\_(ツ)_/¯"))
+    }
+
+    /**
+     * The real thing: Groq's OpenAI-compatible endpoint, a real tool-calling model, the real agent
+     * loop. Runs only when GROQ_API_KEY is set, so CI and contributors without a key are unaffected
+     * and the key never has to live in the repo.
+     *
+     *   GROQ_API_KEY=... ./gradlew :intellij-plugin:test --tests "*AnalystTest*"
+     */
+    @Test
+    fun `real groq model completes a structured investigation when a key is present`() {
+        val key = System.getenv("GROQ_API_KEY").orEmpty()
+        assumeTrue(key.isNotBlank(), "GROQ_API_KEY not set; skipping real Groq test")
+        val model = System.getenv("GROQ_MODEL").orEmpty().ifBlank { AiProvider.GROQ.defaultModel }
+
+        val backend = ScriptedBackend()
+        val steps = ArrayList<TraceStep>()
+        val result = Analyst(
+            OpenAiCompatibleClient(AiProvider.GROQ.endpoint, key, model, requestTimeout = Duration.ofSeconds(60)),
+            backend, model, maxSteps = 6,
+        ) { steps += it }.run(task)
+
+        println("groq($model): verdict=${result.verdict} confidence=${result.confidence} tools=${backend.calls.size} " +
+            "recommendations=${result.recommendations.size} duration=${result.durationMs}ms error=${result.error}")
+        // Token budget is the demo-critical number: Groq's free tier allows 8000 per minute, and an
+        // investigation that exceeds it stalls on visible retries.
+        println("groq tokens: prompt=${result.promptTokens} completion=${result.completionTokens} total=${result.promptTokens + result.completionTokens}")
+        val retries = result.trace.count { it.title.startsWith("Rate limited") }
+        println("groq retries: $retries")
+        println("groq headline: ${result.headline}")
+        result.recommendations.forEach { println("  -> ${it.capability} = ${it.decision}: ${it.reason.take(90)}") }
+
+        assertNull(result.error, "Groq run failed: ${result.error}")
+        assertTrue(backend.calls.isNotEmpty(), "the model never called a tool - tool calling is broken for $model")
+        assertTrue(result.headline.isNotBlank())
+        // A capable model should reach a structured submission rather than trailing off into prose.
+        assertTrue(
+            result.trace.any { it.kind == TraceStep.Kind.FINAL },
+            "no submit_analysis; trace=${result.trace.map { it.title }}",
+        )
     }
 
     /**

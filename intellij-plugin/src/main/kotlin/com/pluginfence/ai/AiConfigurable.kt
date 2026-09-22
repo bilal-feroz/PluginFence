@@ -27,6 +27,10 @@ class AiConfigurable : BoundConfigurable("PluginFence") {
 
     private val draft = Draft()
     private var status: JLabel? = null
+    private var providerCombo: javax.swing.JComboBox<AiProvider>? = null
+    private var providerHint: JLabel? = null
+    private var endpointField: javax.swing.JTextField? = null
+    private var modelField: javax.swing.JTextField? = null
 
     private fun load() {
         val s = AiSettings.getInstance()
@@ -49,17 +53,43 @@ class AiConfigurable : BoundConfigurable("PluginFence") {
                                 "depends on a model.",
                         )
                 }
+                row("Provider:") {
+                    // Picking a provider fills in its endpoint and a model known to handle tool calling,
+                    // so switching between OpenAI, Groq and a local model is one click, not three edits.
+                    val combo = comboBox(AiProvider.values().toList())
+                        .applyToComponent {
+                            selectedItem = AiProvider.of(draft.endpoint)
+                            addActionListener {
+                                val provider = selectedItem as? AiProvider ?: return@addActionListener
+                                if (provider != AiProvider.CUSTOM) {
+                                    endpointField?.text = provider.endpoint
+                                    modelField?.text = provider.defaultModel
+                                }
+                                providerHint?.text = provider.hint
+                            }
+                        }
+                    providerCombo = combo.component
+                    providerHint = label(AiProvider.of(draft.endpoint).hint).component.apply {
+                        foreground = com.intellij.util.ui.UIUtil.getContextHelpForeground()
+                    }
+                }
                 row("Endpoint:") {
-                    textField().bindText(draft::endpoint).align(AlignX.FILL)
-                        .comment("Any OpenAI-compatible chat completions endpoint. OpenAI: https://api.openai.com/v1. Local Ollama: http://localhost:11434/v1")
+                    endpointField = textField().bindText(draft::endpoint).align(AlignX.FILL)
+                        .comment("Any OpenAI-compatible chat completions endpoint.")
+                        .component
                 }
                 row("Model:") {
-                    textField().bindText(draft::model).align(AlignX.FILL)
-                        .comment("For example gpt-4.1-mini, gpt-5-mini, or a local model such as llama3.2:3b")
+                    modelField = textField().bindText(draft::model).align(AlignX.FILL)
+                        .comment("Must support tool calling. Suggestions: " + AiProvider.values().filter { it != AiProvider.CUSTOM }
+                            .joinToString("; ") { "${it.displayName}: ${AiProvider.suggestedModels(it).take(2).joinToString(", ")}" })
+                        .component
                 }
                 row("API key:") {
                     passwordField().bindText(draft::apiKey).align(AlignX.FILL)
-                        .comment("Stored in the IDE credential store, never in a settings file. Leave empty for local endpoints. OPENAI_API_KEY in the environment is used as a fallback.")
+                        .comment(
+                            "Stored in the IDE credential store, never in a settings file. Leave empty for local endpoints; " +
+                                "GROQ_API_KEY / OPENAI_API_KEY in the environment are used as a fallback.",
+                        )
                 }
                 row {
                     checkBox("Automatically analyse CRITICAL incidents as they happen").bindSelected(draft::autoAnalyse)

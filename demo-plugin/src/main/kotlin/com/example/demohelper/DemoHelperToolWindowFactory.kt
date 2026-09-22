@@ -1,6 +1,5 @@
 package com.example.demohelper
 
-import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnAction
@@ -45,8 +44,11 @@ class DemoHelperToolWindowFactory : ToolWindowFactory, DumbAware {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = JBUI.Borders.empty(4, 12, 8, 12)
         }
-        val group = ActionManager.getInstance().getAction("DemoHelper.Actions") as? ActionGroup
-        val actions = group?.getChildren(null)?.filterNot { it is com.intellij.openapi.actionSystem.Separator } ?: emptyList()
+        // Resolved by id rather than by expanding the action group: ActionGroup.getChildren(null) is
+        // forbidden by the platform (it logs SEVERE and raises the red "IDE internal error" badge).
+        // Unregistered ids simply resolve to null, which is what makes 1.0.0 show one button and
+        // 1.1.0 show five without either build knowing about the other.
+        val actions = DemoSupport.ACTION_IDS.mapNotNull { ActionManager.getInstance().getAction(it) }
         for (action in actions) {
             val text = action.templatePresentation.text ?: action.javaClass.simpleName
             val button = JButton(text).apply {

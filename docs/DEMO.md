@@ -18,10 +18,16 @@ If you want a fully unattended dry run first: `scripts/smoke-test.sh` (or `.ps1`
 whole flow below without clicks and asserts on the persisted result. If a local Ollama is running
 it also exercises the AI analyst against it and checks that every analysis completed.
 
-**AI analyst setup (do this before the demo):** *Settings → Tools → PluginFence* → enable, paste
-the OpenAI key from the hackathon vault (it lands in the IDE credential store, not in a file), keep
-model `gpt-4.1-mini`, click *Test Connection*. For an offline demo point the endpoint at
-`http://localhost:11434/v1` with an Ollama model instead. Settings live in the sandbox, so do this
+**AI analyst setup (do this before the demo):** *Settings → Tools → PluginFence* → enable, pick a
+**Provider** (endpoint and model fill in automatically), paste the key, click *Test Connection*.
+
+| Provider | Model | Notes |
+| --- | --- | --- |
+| **Groq** | `openai/gpt-oss-120b` | free tier is enough; ~4 s for a full investigation |
+| **OpenAI** | `gpt-4.1-mini` | the hackathon vault key |
+| **Ollama** | `llama3.2:3b` | fully offline; often answers in prose rather than a structured verdict |
+
+The key lands in the IDE credential store, not in a file. Settings live in the sandbox, so do this
 once in the Act 1 IDE and they carry over to Act 2. Optionally tick *Automatically analyse CRITICAL
 incidents* so the analyst starts on its own the moment the attack sequence fires.
 
@@ -93,25 +99,32 @@ one the smoke test exercises.)
 > followed by a brand-new destination inside ten seconds is exfiltration, and the network leg was
 > blocked outright - not just reported."
 
-9b. Under the attack chain, click **Analyse with AI** (requires the analyst to be configured - see
-    *Before the demo*).
+9b. Under the attack chain, click **Analyse with AI**.
     - The card shows the investigation live, one tool call at a time:
       `get_incident(...)`, `get_plugin_profile(...)`, `get_behavior_drift(...)`,
       `get_plugin_manifest(...)`, `get_policy(...)` - each with a one-line summary of what came back.
-    - Then the verdict pill (**MALICIOUS** / **SUSPICIOUS** / ...), a headline, a plain-English
-      narrative that cites the events, the evidence list, and **Recommended policy** rows such as
-      *NETWORK → BLOCK*, *SENSITIVE FILES → BLOCK*.
+    - Then a coloured **verdict banner** (MALICIOUS / SUSPICIOUS / ...) with a confidence meter, the
+      headline, a narrative citing the actual events, the evidence list, and **Proposed policy**
+      rows rendered as changes - `NETWORK  ASK → BLOCK` - so it is obvious what Apply would do.
     - Click **Apply N changes**, then open **Permissions**: the matrix now shows those decisions as
-      *custom*. Click **Show investigation** to reveal the full trace.
+      *custom*. Click **Show investigation** to replay every tool call.
 
 > Say: "The model did not block anything - PluginFence did that in microseconds, deterministically.
 > What the model adds is the investigation: it pulled the plugin's own manifest and can say that a
 > plugin describing itself as a helper has no business in ~/.ssh. It explains and proposes; you
 > decide; PluginFence enforces."
 
-> If the model is a small local one (Ollama `llama3.2:3b`) it may answer in prose without a
-> structured verdict - the card then shows *INCONCLUSIVE* with the model's text. With
-> `gpt-4.1-mini` or better you get the full structured result in a few seconds.
+> **Nothing here can fail on stage.** If the model is rate limited, unreachable, or not configured
+> at all, the card falls through to a backup model and then to PluginFence's own deterministic
+> rules - you still get a verdict, evidence and a proposed policy, labelled *"PluginFence rules -
+> no model involved"*. That is a talking point, not an apology: the findings were always local; the
+> model only writes them up. A small local model (Ollama `llama3.2:3b`) may answer in prose and show
+> lower confidence; `openai/gpt-oss-120b` on Groq or `gpt-4.1-mini` gives the full structured result
+> in a few seconds.
+>
+> On a free tier, leave *Automatically analyse CRITICAL incidents* **off** during the live demo and
+> click **Analyse with AI** yourself: one investigation costs about 5,500 tokens and Groq's free tier
+> allows 8,000 per minute, so a single deliberate click is always clean.
 
 10. Open **Drift**.
     - Below the header there is a second analyst entry point, **Review this update with AI**, which
