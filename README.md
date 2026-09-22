@@ -17,7 +17,7 @@ Policy Engine
 ALLOW / BLOCK / ALERT
 ```
 
-[![CI](https://github.com/bilal-feroz/Plugin-Fence/actions/workflows/ci.yml/badge.svg)](https://github.com/bilal-feroz/Plugin-Fence/actions/workflows/ci.yml)
+[![CI](https://github.com/bilal-feroz/PluginFence/actions/workflows/ci.yml/badge.svg)](https://github.com/bilal-feroz/PluginFence/actions/workflows/ci.yml)
 ![IntelliJ 2026.2](https://img.shields.io/badge/IntelliJ%20Platform-2026.2-000000?logo=intellijidea)
 ![Java 25](https://img.shields.io/badge/JVM%20agent-java.lang.instrument-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)

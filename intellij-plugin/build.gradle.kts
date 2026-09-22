@@ -51,7 +51,7 @@ intellijPlatform {
         description = providers.fileContents(layout.projectDirectory.file("src/main/resources/META-INF/description.html")).asText
         vendor {
             name = "PluginFence"
-            url = "https://github.com/bilal-feroz/Plugin-Fence"
+            url = "https://github.com/bilal-feroz/PluginFence"
         }
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
