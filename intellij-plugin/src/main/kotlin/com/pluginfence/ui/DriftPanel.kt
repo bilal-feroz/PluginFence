@@ -18,6 +18,7 @@ import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.ListTableModel
 import com.intellij.util.ui.UIUtil
+import com.pluginfence.ai.AnalysisTask
 import com.pluginfence.engine.FenceEngine
 import com.pluginfence.model.BehaviorDrift
 import com.pluginfence.model.BehaviorProfile
@@ -74,6 +75,9 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         isVisible = false
     }
     private val alarmText = WrappedText()
+
+    /** "Should I trust this update?" - shown only when the newest version gained capabilities. */
+    private val analystCard = AnalystCard(engine)
 
     private val model = ListTableModel<Row>()
     private val table = TableView(model)
@@ -132,7 +136,7 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
         table.autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
         table.emptyText.text = "Nothing recorded for this plugin yet"
 
-        val header = UiSupport.column(UiSupport.GAP, alarm, headerCard).apply {
+        val header = UiSupport.column(UiSupport.GAP, alarm, headerCard, analystCard).apply {
             border = JBUI.Borders.empty(UiSupport.PAD, UiSupport.PAD, UiSupport.GAP, UiSupport.PAD)
         }
 
@@ -213,6 +217,7 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
                     "flags anything the new one reaches for that the old one never did.",
             )
             model.items = emptyList()
+            analystCard.bind(null)
             factors.add(UiSupport.hint("Nothing to explain yet."))
             finishRender()
             return
@@ -273,6 +278,9 @@ class DriftPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(true, 
             }
         }
         model.items = buildRows(previous, newest, drift)
+        analystCard.bind(
+            if (drift != null && drift.hasChanges) AnalysisTask.UpdateReview(pluginId, newest.pluginName, drift.oldVersion, drift.newVersion) else null,
+        )
         finishRender()
     }
 

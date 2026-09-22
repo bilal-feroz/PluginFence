@@ -167,6 +167,37 @@ Refreshes are coalesced (200 ms) and applied only to the visible tab; the others
 and rebuilt when selected. During an attack, events arrive in bursts - refreshing a background tab
 would rebuild a combo box or switch the user is mid-click on, and burn EDT time nobody can see.
 
+### AI security analyst (`com.pluginfence.ai`)
+
+The only part of PluginFence that talks to a model, and it is strictly downstream of enforcement:
+it reads what the engine recorded and proposes; a human applies; the deterministic policy is what
+blocks. It is off until configured.
+
+```mermaid
+flowchart LR
+    UI["AnalystCard<br/>(Overview · Drift · Permissions)"] -- "analyse(task)" --> S["AnalysisService<br/>background executor, result cache,<br/>auto-analysis of CRITICAL incidents"]
+    S --> A["Analyst<br/>tool-calling loop, ≤ 8 steps"]
+    A -- "chat completions + tools" --> M["OpenAiCompatibleClient<br/>OpenAI · Ollama · any compatible server"]
+    A -- "get_incident · get_plugin_profile · get_behavior_drift<br/>get_recent_events · get_plugin_manifest · get_policy · get_risk_model" --> T["EngineToolBackend<br/>read-only views over FenceEngine"]
+    A -- "submit_analysis (structured)" --> R["AnalysisResult<br/>verdict · narrative · evidence<br/>recommendations · target changes · trace"]
+    R -- "Apply (user click)" --> P["PolicyStore"]
+```
+
+| Class | Role |
+| --- | --- |
+| `Analyst` | The agent loop. Sends the system prompt and task, executes the tool calls the model returns (echoing results with matching `tool_call_id`s), and stops at `submit_analysis`. A prose-only answer becomes an *inconclusive* result; the step budget forces a final submission; every I/O or protocol failure becomes a failed result, never an exception into the UI. |
+| `AnalystTools` / `EngineToolBackend` | The tool table (OpenAI function-calling schemas) and their implementations. All read-only. `get_plugin_manifest` reads the suspect plugin's own `META-INF/plugin.xml` through the class loader the agent attributed its events to - real context about what the plugin *claims* to be. |
+| `OpenAiCompatibleClient` | JDK `HttpClient` + the platform's bundled Gson. Chat Completions with `tools`; tolerant of servers that return tool arguments as objects. No streaming: the tool calls are the progress indicator. |
+| `AnalysisService` | Application service. Runs analyses on a bounded pool, caches results per task key, dedups concurrent requests, publishes progress on the message bus (`AnalysisListener`), applies recommendations through `FenceEngine.setPolicy` / `PolicyStore.approve|revoke`, and - when enabled - analyses CRITICAL incidents as they arrive. |
+| `AiSettings` / `AiConfigurable` | Endpoint, model, enable flags in `pluginfence-ai.xml`; the API key in the IDE credential store (`PasswordSafe`). `pluginfence.ai.*` system properties override everything for scripted runs. |
+| `AnalystCard` | One card, three tasks (incident, update review, trust report), four states (not configured, idle, investigating with a live trace, result with Apply / Re-run / Show investigation). Subscribes on `addNotify` and disconnects on `removeNotify`, so it survives the panels being rebuilt on every refresh. |
+
+Why a hand-written loop rather than an agent framework: the loop is ~150 lines, has no runtime
+dependencies to reconcile with the IDE's class path, and can be read in full by a reviewer -
+which matters when the reviewer's question is "what exactly can the model do here?" (answer:
+call read-only tools and return JSON). The pattern is the one Koog formalises; swapping the loop
+for it is future work, not a change of design.
+
 ## 4. Demo plugin
 
 `demo-plugin/` builds **Demo Helper 1.0.0** (one benign action). `demo-plugin-update/` compiles the

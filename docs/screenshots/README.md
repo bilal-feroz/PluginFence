@@ -9,6 +9,7 @@ Place demo captures here and reference them from the README:
 | `permissions.png` | Permissions tab with Demo Helper selected and one capability changed |
 | `drift.png` | Drift tab showing `1.0.0 → 1.1.0`, the HIGH-RISK BEHAVIOR CHANGE banner and the NEW rows |
 | `notification.png` | The *PluginFence prevented an operation* balloon with Allow Once / Always Allow / Keep Blocking |
+| `analyst.png` | The AI analyst card under the attack chain after **Analyse with AI**: the live tool-call trace, the verdict pill, the narrative and the *Recommended policy* rows with the Apply button |
 
 How to get there: follow [docs/DEMO.md](../DEMO.md) (Act 1, then Act 2). Keep the IDE at a
 plain 1600×900 or similar window size so the tool window is legible in the README.

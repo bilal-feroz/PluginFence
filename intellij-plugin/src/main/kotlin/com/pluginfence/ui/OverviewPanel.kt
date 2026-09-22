@@ -19,6 +19,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.pluginfence.ai.AnalysisTask
 import com.pluginfence.engine.FenceEngine
 import com.pluginfence.model.FenceEvent
 import com.pluginfence.model.FenceRisk
@@ -515,6 +516,15 @@ class IncidentDetailPanel(private val engine: FenceEngine, private val navigator
             content.add(ChainStep(i + 1, i == 0, false, UiSupport.verdictColor(event.verdict), stepCard(event)))
         }
         content.add(ChainOutcome(outcomeColor(incident), outcomeCard(incident)))
+
+        // The analyst sits right under the chain it explains. It is rebuilt with the panel; its
+        // state (running, result) lives in AnalysisService, so a refresh never loses an answer.
+        content.add(UiSupport.spacer(UiSupport.PAD))
+        content.add(
+            AnalystCard(engine).apply {
+                bind(AnalysisTask.Incident(incident.id, incident.pluginId, incident.pluginName))
+            },
+        )
 
         content.add(UiSupport.spacer(UiSupport.PAD))
         content.add(

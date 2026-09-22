@@ -10,6 +10,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import com.pluginfence.ai.AnalysisTask
 import com.pluginfence.engine.FenceEngine
 import com.pluginfence.model.Capability
 import com.pluginfence.model.PluginInfo
@@ -170,6 +171,9 @@ class PermissionsPanel(private val engine: FenceEngine) : SimpleToolWindowPanel(
             )
             panel.add(note)
         }
+
+        panel.add(UiSupport.spacer(UiSupport.GAP))
+        panel.add(AnalystCard(engine).apply { bind(AnalysisTask.TrustReport(plugin.pluginId, plugin.name)) })
 
         panel.add(UiSupport.spacer(UiSupport.PAD))
         panel.add(UiSupport.sectionLabel("Capabilities"))

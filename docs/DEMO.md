@@ -15,7 +15,15 @@ RFC 5737 documentation address that is not routable; the "process" is the IDE's 
 Have two terminals ready. The sandbox IDE opens this repository as its project.
 
 If you want a fully unattended dry run first: `scripts/smoke-test.sh` (or `.ps1`) performs the
-whole flow below without clicks and asserts on the persisted result.
+whole flow below without clicks and asserts on the persisted result. If a local Ollama is running
+it also exercises the AI analyst against it and checks that every analysis completed.
+
+**AI analyst setup (do this before the demo):** *Settings → Tools → PluginFence* → enable, paste
+the OpenAI key from the hackathon vault (it lands in the IDE credential store, not in a file), keep
+model `gpt-4.1-mini`, click *Test Connection*. For an offline demo point the endpoint at
+`http://localhost:11434/v1` with an Ollama model instead. Settings live in the sandbox, so do this
+once in the Act 1 IDE and they carry over to Act 2. Optionally tick *Automatically analyse CRITICAL
+incidents* so the analyst starts on its own the moment the attack sequence fires.
 
 ## Act 1 - a normal plugin (Demo Helper 1.0.0)
 
@@ -85,7 +93,29 @@ one the smoke test exercises.)
 > followed by a brand-new destination inside ten seconds is exfiltration, and the network leg was
 > blocked outright - not just reported."
 
+9b. Under the attack chain, click **Analyse with AI** (requires the analyst to be configured - see
+    *Before the demo*).
+    - The card shows the investigation live, one tool call at a time:
+      `get_incident(...)`, `get_plugin_profile(...)`, `get_behavior_drift(...)`,
+      `get_plugin_manifest(...)`, `get_policy(...)` - each with a one-line summary of what came back.
+    - Then the verdict pill (**MALICIOUS** / **SUSPICIOUS** / ...), a headline, a plain-English
+      narrative that cites the events, the evidence list, and **Recommended policy** rows such as
+      *NETWORK → BLOCK*, *SENSITIVE FILES → BLOCK*.
+    - Click **Apply N changes**, then open **Permissions**: the matrix now shows those decisions as
+      *custom*. Click **Show investigation** to reveal the full trace.
+
+> Say: "The model did not block anything - PluginFence did that in microseconds, deterministically.
+> What the model adds is the investigation: it pulled the plugin's own manifest and can say that a
+> plugin describing itself as a helper has no business in ~/.ssh. It explains and proposes; you
+> decide; PluginFence enforces."
+
+> If the model is a small local one (Ollama `llama3.2:3b`) it may answer in prose without a
+> structured verdict - the card then shows *INCONCLUSIVE* with the model's text. With
+> `gpt-4.1-mini` or better you get the full structured result in a few seconds.
+
 10. Open **Drift**.
+    - Below the header there is a second analyst entry point, **Review this update with AI**, which
+      asks the same agent the update-specific question. Same on **Permissions** (*Generate trust report*).
     - Headline **3 NEW CAPABILITIES**, banner **HIGH-RISK BEHAVIOR CHANGE**,
       `Demo Helper 1.0.0 → 1.1.0 - risk 100/100 CRITICAL`.
     - Table: Project files ✓ ✓ UNCHANGED, Network ✓ ✓ UNCHANGED, 127.0.0.1 ✓ ✓ UNCHANGED,

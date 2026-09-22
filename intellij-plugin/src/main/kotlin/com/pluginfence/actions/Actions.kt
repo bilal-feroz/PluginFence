@@ -47,3 +47,10 @@ class ResetBaselinesAction : DumbAwareAction() {
         if (answer == Messages.YES) FenceEngine.getInstance().resetBaselines()
     }
 }
+
+class ConfigureAiAction : DumbAwareAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+            .showSettingsDialog(e.project, com.pluginfence.ai.AiConfigurable::class.java)
+    }
+}

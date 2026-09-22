@@ -92,6 +92,15 @@ check(not suspicious, "no PluginFence errors/exceptions in idea.log" + detail)
 opened = any("PluginFence tool window opened" in line for log in logs for line in open(log, encoding="utf-8", errors="ignore"))
 check(opened, "PluginFence tool window was constructed during the scripted run")
 
+# AI leg (only when the smoke script enabled it): the analyst must have run inside the IDE, against a
+# real model, and every analysis must have completed without an error.
+if os.environ.get("PLUGINFENCE_SMOKE_AI") == "1":
+    ai_lines = [line.strip() for log in logs for line in open(log, encoding="utf-8", errors="ignore") if "PluginFence AI analysis complete" in line]
+    check(len(ai_lines) >= 1, "AI analyst ran inside the IDE (%d analyses)" % len(ai_lines))
+    check(all(" error=" not in line for line in ai_lines), "AI analyses completed without errors")
+    for line in ai_lines[:4]:
+        print("     " + line.split("INFO - ")[-1][:220])
+
 print()
 if failures:
     print("%d check(s) failed" % len(failures))

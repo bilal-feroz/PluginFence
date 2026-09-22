@@ -330,6 +330,9 @@ class FenceEngine : Disposable {
 
     // --- user actions -----------------------------------------------------------------------------------------
 
+    /** Class loader of a plugin the agent has seen; lets the AI analyst read the plugin's own descriptor. */
+    fun pluginClassLoader(pluginId: String): ClassLoader? = bridge?.pluginClassLoader(pluginId)
+
     fun setEnforcement(enabled: Boolean) {
         enforcementEnabled = enabled
         state.state.settings.enforcementEnabled = enabled

@@ -91,6 +91,11 @@ fun RunIdeTask.attachPluginFenceAgent() {
     val autorun = providers.gradleProperty("demoAutorun").orElse("")
     val exitAfter = providers.gradleProperty("demoExitAfter").orElse("")
     val openToolWindows = providers.gradleProperty("demoOpenToolWindows").orElse("false")
+    // AI analyst for scripted runs, e.g. -PaiEndpoint=http://127.0.0.1:11434/v1 -PaiModel=llama3.2:3b -PaiAutoAnalyse=true
+    val aiEndpoint = providers.gradleProperty("aiEndpoint").orElse("")
+    val aiModel = providers.gradleProperty("aiModel").orElse("")
+    val aiKey = providers.gradleProperty("aiKey").orElse("")
+    val aiAutoAnalyse = providers.gradleProperty("aiAutoAnalyse").orElse("")
     jvmArgumentProviders.add(CommandLineArgumentProvider {
         buildList {
             add("-javaagent:${agentJar.get()}")
@@ -100,6 +105,13 @@ fun RunIdeTask.attachPluginFenceAgent() {
             if (autorun.get().isNotBlank()) add("-Dpluginfence.demo.autorun=${autorun.get()}")
             if (exitAfter.get().isNotBlank()) add("-Dpluginfence.demo.exitAfter=${exitAfter.get()}")
             if (openToolWindows.get() == "true") add("-Dpluginfence.demo.openToolWindows=true")
+            if (aiEndpoint.get().isNotBlank()) {
+                add("-Dpluginfence.ai.enabled=true")
+                add("-Dpluginfence.ai.endpoint=${aiEndpoint.get()}")
+            }
+            if (aiModel.get().isNotBlank()) add("-Dpluginfence.ai.model=${aiModel.get()}")
+            if (aiKey.get().isNotBlank()) add("-Dpluginfence.ai.apiKey=${aiKey.get()}")
+            if (aiAutoAnalyse.get().isNotBlank()) add("-Dpluginfence.ai.autoAnalyse=${aiAutoAnalyse.get()}")
         }
     })
     // Open the repository itself so "project file" reads have a project to be relative to.

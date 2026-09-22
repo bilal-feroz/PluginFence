@@ -68,6 +68,7 @@ PLUGINFENCE asks **"what did this plugin actually attempt to do?"** - and answer
 | **Behavior drift** | When a new version appears, PluginFence shows exactly what it does that the previous version never did, with a risk rating and a *HIGH-RISK BEHAVIOR CHANGE* banner. |
 | **Correlation** | Sequences matter: *sensitive file read → new outbound connection within 10 s* becomes a **POTENTIAL SECRET EXFILTRATION** incident and the network leg is blocked outright. |
 | **Native UI** | A JetBrains-style tool window with Overview, Activity, Permissions and Drift tabs, plus notifications with **Allow Once / Always Allow / Keep Blocking**. |
+| **AI security analyst** | An agent (OpenAI API or any OpenAI-compatible model, including local Ollama) that **investigates with read-only tools** over PluginFence's evidence - the incident chain, the plugin's baseline and drift, its real `plugin.xml`, its policy - and returns a plain-English verdict plus a proposed permission matrix you apply with one click. It explains and proposes; it never enforces. Opt-in, key in the IDE credential store. |
 | **Privacy** | Everything stays on the machine. No telemetry, no uploads, no secret values in logs, redacted URLs and command lines. |
 
 ## Screenshots
@@ -78,26 +79,38 @@ What the four tabs show is described step by step in [docs/DEMO.md](docs/DEMO.md
 unattended smoke test ([`scripts/smoke-test.sh`](scripts/smoke-test.sh)) verifies the same flow
 from the persisted state.
 
-## Why not just use AI?
+## Where AI fits - and where it doesn't
 
-An AI model can inspect code and *suggest* that an operation looks suspicious.
-PLUGINFENCE observes the operation while it actually occurs and can *prevent* it.
-
-The difference is prediction versus enforcement.
+A model can inspect code and *suggest* that an operation looks suspicious. PluginFence observes
+the operation while it actually occurs and can *prevent* it. Prediction is the wrong layer for
+enforcement - so PluginFence keeps the two apart:
 
 ```text
-AI:
-"This plugin may access credentials."
-
-PLUGINFENCE:
-"Plugin com.example.demo-helper 1.1.0 attempted to read
-~/.ssh/id_rsa at 10:41:03 via java.nio.file.Files.readString.
-
-The operation was blocked."
+DETERMINISTIC (always on, no model involved)          AI ANALYST (opt-in, advisory)
+  intercept the call at the call site                    investigate the evidence with tools
+  attribute it to a plugin                               explain what happened, in plain English
+  decide ALLOW / ASK / BLOCK in microseconds             judge: malicious, suspicious, benign?
+  record, baseline, detect drift, correlate              propose the permission matrix
+                                                         -> the user applies it with one click
 ```
 
-No LLM is involved anywhere in PluginFence. Detection, attribution, policy, blocking, baselines,
-drift and correlation are all deterministic and run locally.
+The analyst is a **tool-calling agent**, not a prompt wrapped around a button. Given an incident,
+an update or a plugin, it decides which evidence to pull - `get_incident`, `get_plugin_profile`,
+`get_behavior_drift`, `get_recent_events`, `get_plugin_manifest` (the plugin's real `plugin.xml`,
+read from its jar), `get_policy`, `get_risk_model` - reasons over it, and finishes with a
+structured `submit_analysis`. Every tool is read-only, every string it reads is treated as
+untrusted data, and its only output is a recommendation. That is the division of labour:
+
+```text
+AI:          "Demo Helper describes itself as a formatter. Version 1.1.0 read a credential
+              store and, 0.6 s later, opened a socket to a raw IP it had never contacted.
+              That is exfiltration. Recommend NETWORK: BLOCK, SENSITIVE_FILES: BLOCK."
+
+PLUGINFENCE: "Plugin com.example.demo-helper 1.1.0 attempted to read ~/.ssh/id_rsa at
+              10:41:03 via java.nio.file.Files.readString. The operation was blocked."
+```
+
+If the model is slow, wrong or unavailable, nothing about protection changes.
 
 ## How it works
 
@@ -233,6 +246,27 @@ as the project. Use `-PpluginfenceDebug=true` for verbose agent diagnostics in t
 The Overview tab shows *Protection ACTIVE* when the agent is attached; otherwise it shows exactly
 these setup steps.
 
+### Turning on the AI analyst
+
+*Settings → Tools → PluginFence* (or *Tools → PluginFence → Configure AI Analyst...*):
+
+| Setting | Value |
+| --- | --- |
+| Enable | on (off by default - nothing is sent until you opt in) |
+| Endpoint | `https://api.openai.com/v1`, or any OpenAI-compatible server, e.g. Ollama at `http://localhost:11434/v1` |
+| Model | `gpt-4.1-mini` (default), `gpt-5-mini`, or a local model such as `llama3.2:3b` |
+| API key | stored in the IDE credential store (`PasswordSafe`), never in a settings file; `OPENAI_API_KEY` is used as a fallback; local endpoints need none |
+| Auto-analyse | optionally run the analyst on every CRITICAL incident as it happens |
+
+*Test Connection* makes one round trip. For scripted runs the same values can be passed on the
+command line: `./gradlew runFenceIdeUpdated -PaiEndpoint=http://127.0.0.1:11434/v1 -PaiModel=llama3.2:3b -PaiAutoAnalyse=true`.
+
+What leaves the machine when the analyst runs, and only then: plugin ids, names, versions and
+manifests, redacted paths, host names, executable names, verdicts, rule ids and risk factors -
+exactly what the Activity tab shows. PluginFence never captures file contents, environment values
+or request bodies, so they cannot be sent. Point the endpoint at a local model and nothing leaves
+at all.
+
 ## Demo walkthrough (2-3 minutes)
 
 The scripted version of this walkthrough runs unattended: `scripts/smoke-test.sh` (or `.ps1`).
@@ -251,6 +285,9 @@ The narrated version is in [docs/DEMO.md](docs/DEMO.md).
 7. **Run Attack Sequence** → secret read, then a connection 0.6 s later: the network leg is
    **BLOCKED by the correlation rule** and Overview shows *Potential secret exfiltration* with the
    attack chain and risk 100 / CRITICAL.
+   Under the chain, click **Analyse with AI**: watch the analyst pull the incident, the plugin's
+   baseline, its drift, its manifest and its policy (each tool call appears as it happens), then
+   deliver a verdict and a proposed permission matrix. **Apply** writes it to Permissions.
 8. Open **Drift**: `1.0.0 → 1.1.0`, *HIGH-RISK BEHAVIOR CHANGE*, NEW: sensitive file access (ssh),
    network 198.51.100.42, process java.
 9. Open **Permissions**: change any capability for Demo Helper; it applies immediately and persists.
@@ -307,7 +344,8 @@ docs/               ARCHITECTURE.md, THREAT_MODEL.md, DEMO.md, screenshots/
 - Organisation-wide signed policy packs
 - OS-level companions (eBPF / Endpoint Security / ETW) for native and out-of-process activity
 - Marketplace metadata correlation (vendor, release cadence, permission drift across releases)
-- Optional local explanation of incidents - never required for detection
+- Analyst memory across sessions ("this host was cleared last week") and a Koog-based agent once
+  the plugin classpath can carry it safely
 
 ## License
 

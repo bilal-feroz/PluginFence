@@ -16,6 +16,12 @@
 
         <applicationService serviceImplementation="com.pluginfence.persistence.FenceState"/>
         <applicationService serviceImplementation="com.pluginfence.persistence.FenceHistory"/>
+        <applicationService serviceImplementation="com.pluginfence.ai.AiSettings"/>
+
+        <applicationConfigurable parentId="tools"
+                                 instance="com.pluginfence.ai.AiConfigurable"
+                                 id="com.pluginfence.settings"
+                                 displayName="PluginFence"/>
 
         <postStartupActivity implementation="com.pluginfence.engine.FenceProjectActivity"/>
     </extensions>
@@ -38,6 +44,9 @@
                     text="Clear Activity History" description="Remove recorded events and incidents"/>
             <action id="PluginFence.ResetBaselines" class="com.pluginfence.actions.ResetBaselinesAction"
                     text="Reset Behavior Baselines" description="Forget learned plugin behaviour profiles and drift reports"/>
+            <separator/>
+            <action id="PluginFence.ConfigureAi" class="com.pluginfence.actions.ConfigureAiAction"
+                    text="Configure AI Analyst..." description="Enable the AI security analyst and set its model endpoint and API key"/>
         </group>
     </actions>
 </idea-plugin>

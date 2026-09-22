@@ -62,6 +62,10 @@ class AgentBridge(private val engine: FenceEngine) {
             )
         }
 
+    /** Class loader of a plugin the agent has seen (for reading its own descriptor); null if unknown or unloaded. */
+    fun pluginClassLoader(pluginId: String): ClassLoader? =
+        GuardBridge.identities().firstOrNull { it.isKnown && it.pluginId() == pluginId }?.loader()
+
     /** Runs [block] with the hook re-entrancy guard held so PluginFence's own I/O is never intercepted. */
     fun <T> guarded(block: () -> T): T = GuardHooks.withGuard(block)
 
